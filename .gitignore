@@ -635,6 +635,8 @@ data/neo4j/
 data/kafka/
 data/zookeeper/
 
+data/
+
 .gradle/
 build/
 
