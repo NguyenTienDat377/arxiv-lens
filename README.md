@@ -112,10 +112,13 @@ arxiv-lens/
 │   └── neo4j-statefulset.yml
 ├── graph-pipeline/             # Python service
 │   ├── pipeline/
+│   │   ├── models.py           # Paper schema (Pydantic) — shared by every stage
+│   │   ├── ingest_arxiv.py     # arXiv API → dated corpus snapshot
 │   │   ├── extract_entities.py
 │   │   ├── build_graph.py
 │   │   ├── drift_detector.py   # evidently AI embedding drift
 │   │   └── consistency_checker.py  # Z3 relation validator
+│   ├── data/raw/<snapshot-id>/ # Immutable corpus snapshots (JSONL, gitignored)
 │   ├── graph/                  # Neo4j client, graph diff utilities
 │   ├── retrieval/              # GraphRAG query logic
 │   ├── eval/                   # Golden QA set, quality gate
@@ -148,6 +151,12 @@ arxiv-lens/
 
 ## Key engineering decisions
 
+### Why immutable corpus snapshots?
+
+Ingestion writes a dated, append-only JSONL snapshot to disk, and every downstream stage reads from a snapshot id rather than from the network. This is what makes drift detection meaningful: drift is defined as a shift between the embedding distribution of one snapshot and the next, so both must still exist, byte-for-byte, when the detector fires. Streaming arXiv results straight into extraction would leave nothing to compare against and no way to answer "which papers moved the distribution?" It also makes the pipeline replayable — extraction can be re-run against a fixed corpus while prompts are tuned, without re-querying arXiv.
+
+Only abstracts are ingested, not PDF full text. Abstracts carry enough concept and method signal to build a meaningful knowledge graph, while full-text parsing (layout, math, references) is a substantially larger problem that would dominate the project.
+
 ### Why two microservices?
 
 The Python/Java boundary is a genuine language mismatch — not microservices for the sake of it. The graph pipeline is Python because the entire ML/NLP ecosystem (spaCy, sentence-transformers, Z3 Python bindings, evidently, MLflow) lives there. The query service is Java because Spring Boot's production-grade HTTP server, Kafka client, and observability tooling are significantly more mature than Python equivalents for API serving.
@@ -168,7 +177,8 @@ The `outbound/` gRPC adapter can be swapped for an in-memory mock in tests witho
 
 ## Roadmap
 
-- [ ] `graph-pipeline` — arXiv ingestion via API
+- [ ] `graph-pipeline` — shared paper schema (Pydantic)
+- [ ] `graph-pipeline` — arXiv ingestion via API → immutable corpus snapshots
 - [ ] `graph-pipeline` — entity/relation extraction (spaCy + LLM)
 - [ ] `graph-pipeline` — Neo4j graph builder
 - [ ] `graph-pipeline` — embedding drift detector (evidently AI)
