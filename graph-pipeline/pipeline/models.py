@@ -1,7 +1,9 @@
 import re
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+from .ontology import EntityType, RelationType
 
 _SHORT_ID_RE = re.compile(r"^(?P<arxiv_id>.+?)v(?P<version>\d+)$")
 
@@ -24,3 +26,32 @@ class Paper(BaseModel):
     updated: datetime
     doi: str | None = None
     pdf_url: str
+
+class Entity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    type: EntityType
+
+
+class Relation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str
+    predicate: RelationType
+    object: str
+
+
+class PaperExtraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entities: list[Entity]
+    relations: list[Relation]
+
+
+class ExtractionRecord(BaseModel):
+    arxiv_id: str
+    version: int
+    extraction: PaperExtraction
+
+
