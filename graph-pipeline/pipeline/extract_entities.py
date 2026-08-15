@@ -1,5 +1,6 @@
 import argparse
 import functools
+import re
 import time
 
 import anthropic
@@ -189,9 +190,15 @@ def repair(extraction: PaperExtraction) -> tuple[PaperExtraction, list[str]]:
     return extraction.model_copy(update={"relations": kept}), log
 
 
+def _custom_id(arxiv_id: str) -> str:
+    # The Batch API restricts custom_id to ^[a-zA-Z0-9_-]{1,64}$; arXiv ids
+    # carry a '.' and older ones a '/'.
+    return re.sub(r"[^a-zA-Z0-9_-]", "_", arxiv_id)[:64]
+
+
 def _request(paper: Paper) -> Request:
     return Request(
-        custom_id=paper.arxiv_id,
+        custom_id=_custom_id(paper.arxiv_id),
         params=MessageCreateParamsNonStreaming(
             model=MODEL,
             max_tokens=MAX_TOKENS,
@@ -209,9 +216,11 @@ def _request(paper: Paper) -> Request:
 
 
 def submit_batch(papers: list[Paper]) -> str:
-    batch = _client().messages.batches.create(
-        requests=[_request(paper) for paper in papers]
-    )
+    requests = [_request(paper) for paper in papers]
+    if len({request["custom_id"] for request in requests}) != len(requests):
+        raise ValueError("custom_id collision after sanitizing arxiv ids")
+
+    batch = _client().messages.batches.create(requests=requests)
     return batch.id
 
 
@@ -225,26 +234,31 @@ def await_batch(batch_id: str, poll_seconds: int = 30) -> None:
         time.sleep(poll_seconds)
 
 
-def collect_batch(batch_id: str) -> tuple[dict[str, PaperExtraction], dict[str, str]]:
+def collect_batch(
+    batch_id: str, papers: list[Paper]
+) -> tuple[dict[str, PaperExtraction], dict[str, str]]:
+    arxiv_ids = {_custom_id(paper.arxiv_id): paper.arxiv_id for paper in papers}
     extractions: dict[str, PaperExtraction] = {}
     failures: dict[str, str] = {}
 
     for result in _client().messages.batches.results(batch_id):
+        arxiv_id = arxiv_ids.get(result.custom_id, result.custom_id)
+
         if result.result.type != "succeeded":
-            failures[result.custom_id] = result.result.type
+            failures[arxiv_id] = result.result.type
             continue
 
         text = next(
             (b.text for b in result.result.message.content if b.type == "text"), None
         )
         if text is None:
-            failures[result.custom_id] = "no text block"
+            failures[arxiv_id] = "no text block"
             continue
 
         try:
-            extractions[result.custom_id] = PaperExtraction.model_validate_json(text)
+            extractions[arxiv_id] = PaperExtraction.model_validate_json(text)
         except ValueError as error:
-            failures[result.custom_id] = f"parse error: {error}"
+            failures[arxiv_id] = f"parse error: {error}"
 
     return extractions, failures
 
@@ -312,7 +326,7 @@ def main() -> None:
         batch_id = submit_batch(pending)
         print(f"submitted batch {batch_id}")
         await_batch(batch_id)
-        extractions, failures = collect_batch(batch_id)
+        extractions, failures = collect_batch(batch_id, pending)
 
     # Repair before the record is built, so what lands on disk is already
     # ontology-clean and downstream stages never see a violating edge.
