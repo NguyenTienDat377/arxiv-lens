@@ -16,7 +16,7 @@ class RelationType(StrEnum):
     EVALUATED_ON = "EVALUATED_ON"
     ADDRESSES = "ADDRESSES"
     COMBINES = "COMBINES"
-    COMPLES_TO = "COMPLES_TO"
+    COMPILES_TO  = "COMPILES_TO "
 
 @dataclass(frozen=True)
 class RelationSpec:
@@ -56,7 +56,7 @@ RELATION_SPECS: dict[RelationType, RelationSpec] = {
         symmetric=True,
         irreflexive=True
     ),
-    RelationType.COMPLES_TO: RelationSpec(
+    RelationType.COMPILES_TO : RelationSpec(
         domain=frozenset({EntityType.FORMALISM}),
         range=frozenset({EntityType.FORMALISM}),
         transitive=True,
