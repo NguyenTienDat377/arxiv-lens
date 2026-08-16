@@ -41,7 +41,7 @@ RELATION_SPECS: dict[RelationType, RelationSpec] = {
         range=frozenset({EntityType.DATASET}),
     ),
     RelationType.USES: RelationSpec(
-        domain=frozenset({EntityType.METHOD}),
+        domain=frozenset({EntityType.METHOD, EntityType.FORMALISM}),
         range=frozenset({EntityType.METHOD, EntityType.MODEL, EntityType.FORMALISM}),
         irreflexive=True,
         asymmetric=True
