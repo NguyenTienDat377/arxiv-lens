@@ -166,8 +166,6 @@ def load_relations(
     types: dict[str, EntityType],
     snapshot_id: str,
 ) -> int:
-    # Grouped by (subject label, predicate, object label) so each query can name
-    # its labels and relationship type literally, and match on the indexed key.
     groups: dict[tuple[str, RelationType, str], list[dict]] = defaultdict(list)
     for record in records:
         for relation in record.extraction.relations:

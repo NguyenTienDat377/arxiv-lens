@@ -184,15 +184,12 @@ def repair(extraction: PaperExtraction) -> tuple[PaperExtraction, list[str]]:
         elif not candidates:
             log.append(f"dropped {edge}: no relation accepts {subject_type} -> {object_type}")
         else:
-            # Several predicates fit; guessing would be worse than reporting.
             kept.append(relation)
 
     return extraction.model_copy(update={"relations": kept}), log
 
 
 def _custom_id(arxiv_id: str) -> str:
-    # The Batch API restricts custom_id to ^[a-zA-Z0-9_-]{1,64}$; arXiv ids
-    # carry a '.' and older ones a '/'.
     return re.sub(r"[^a-zA-Z0-9_-]", "_", arxiv_id)[:64]
 
 
@@ -327,9 +324,7 @@ def main() -> None:
         print(f"submitted batch {batch_id}")
         await_batch(batch_id)
         extractions, failures = collect_batch(batch_id, pending)
-
-    # Repair before the record is built, so what lands on disk is already
-    # ontology-clean and downstream stages never see a violating edge.
+        
     repairs: dict[str, list[str]] = {}
     for arxiv_id, extraction in extractions.items():
         extractions[arxiv_id], repairs[arxiv_id] = repair(extraction)

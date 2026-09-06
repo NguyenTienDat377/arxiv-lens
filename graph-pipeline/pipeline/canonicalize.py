@@ -7,8 +7,7 @@ from .models import Entity, ExtractionRecord, Relation
 from .ontology import RELATION_SPECS, EntityType
 from .snapshots import list_extracted, load_extractions
 
-# Applied when nothing else separates two candidate types, ordered from the
-# most concrete claim to the most abstract.
+
 TYPE_PRECEDENCE = [
     EntityType.DATASET,
     EntityType.MODEL,
@@ -22,15 +21,46 @@ _PUNCTUATION = re.compile(r"[\-_/]+")
 _WHITESPACE = re.compile(r"\s+")
 
 
+ALIASES: dict[str, str] = {
+    "LLM": "Large Language Models",
+    "MLLM": "Multimodal Large Language Models",
+    "VLM": "Vision-Language Model",
+    "RAG": "Retrieval-Augmented Generation",
+    "LTN": "Logic Tensor Networks",
+    "ASP": "Answer Set Programming",
+    "ILP": "Inductive Logic Programming",
+    "SMT": "Satisfiability Modulo Theories",
+    "KG": "knowledge graph",
+    "CoT": "Chain-of-Thought",
+    "GNN": "graph neural network",
+    "DRL": "deep reinforcement learning",
+    "RL": "reinforcement learning",
+    "PDDL": "Planning Domain Definition Language",
+    "MCTS": "Monte Carlo Tree Search",
+    "DSL": "domain-specific language",
+    "NLU": "natural language understanding",
+    "NLI": "natural language inference",
+    "SLM": "Small Language Models",
+    "OWL": "Web Ontology Language",
+}
+
+
 def normalize(name: str) -> str:
     spaced = _WHITESPACE.sub(" ", _PUNCTUATION.sub(" ", name)).strip()
     words = []
     for word in spaced.split():
-        # 'LLMs' is an acronym plus a plural; 'CLIPS' is an acronym outright.
         if len(word) > 3 and word.endswith("s") and not word.isupper():
             word = word[:-1]
         words.append(word.lower())
     return " ".join(words)
+
+
+_ALIAS_KEYS = {normalize(k): normalize(v) for k, v in ALIASES.items()}
+
+
+def _group_key(name: str) -> str:
+    key = normalize(name)
+    return _ALIAS_KEYS.get(key, key)
 
 
 def canonical_names(records: list[ExtractionRecord]) -> dict[str, str]:
@@ -41,10 +71,8 @@ def canonical_names(records: list[ExtractionRecord]) -> dict[str, str]:
 
     groups: dict[str, list[str]] = defaultdict(list)
     for name in counts:
-        groups[normalize(name)].append(name)
+        groups[_group_key(name)].append(name)
 
-    # Most-mentioned surface form wins; shortest then alphabetical break ties,
-    # so the mapping is stable across runs.
     return {
         name: min(variants, key=lambda v: (-counts[v], len(v), v))
         for variants in groups.values()
