@@ -13,8 +13,6 @@ from .snapshots import list_extracted, load_extractions, load_snapshot
 
 load_dotenv()
 
-# Cypher cannot parameterize a label, so every label we interpolate has to come
-# from this table rather than from data.
 LABELS: dict[EntityType, str] = {
     EntityType.METHOD: "Method",
     EntityType.TASK: "Task",

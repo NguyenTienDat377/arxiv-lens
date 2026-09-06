@@ -56,8 +56,6 @@ def build_solver(
     solver.set(unsat_core=True)
     labels: dict[str, str] = {}
 
-    # Each entity gets one variable over the type sort. A variable holds exactly
-    # one value, so type disjointness is structural rather than asserted.
     type_of = {name: z3.Const(f"type_{name}", _TYPE_SORT) for name in types}
     for name, entity_type in types.items():
         solver.add(type_of[name] == _TYPE_BY_NAME[str(entity_type)])
@@ -69,9 +67,6 @@ def build_solver(
     holds: dict[tuple[RelationType, str, str], z3.BoolRef] = {}
     for predicate, spec in RELATION_SPECS.items():
         pairs = edges.get(predicate, [])
-        # Only pairs the edges can actually reach need a variable. Quantifying
-        # over every node pair is what makes a naive encoding intractable:
-        # ADDRESSES alone would need ~500k booleans instead of 481.
         scope = _closure(pairs) if spec.transitive else set(pairs)
         scope |= {(b, a) for a, b in scope}
 
@@ -92,8 +87,6 @@ def build_solver(
                 f"{a} --{predicate}--> {b}",
             )
 
-        # Properties are facts about the relation itself, so they are asserted
-        # plainly: only edges appear in an unsat core, never the ontology.
         for a, b in scope:
             if spec.irreflexive and a == b:
                 solver.add(z3.Not(holds[(predicate, a, b)]))
@@ -144,7 +137,6 @@ def find_conflicts(
             break
         conflicts.append(sorted(core))
 
-        # Drop one edge from the core so the next solve finds a different clash.
         predicate_name, _, rest = str(solver.unsat_core()[0]).partition(":")[2].partition(":")
         subject, _, obj = rest.partition("->")
         working[RelationType(predicate_name)] = [

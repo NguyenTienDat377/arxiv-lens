@@ -7,12 +7,8 @@ from .extract_entities import validate
 from .models import ExtractionRecord
 from .snapshots import list_extracted, load_extractions
 
-# A shared paper is reused verbatim from the cache, so any change to one means
-# something upstream moved. Everything else scales with how much the corpus grew.
 MAX_CHANGED_SHARE = 0.05
 MAX_LOST_EDGE_SHARE = 0.10
-# A rate, not a count: a bigger corpus carries more violations without getting
-# any worse. Half a percentage point of extra violated edges is the ceiling.
 MAX_VIOLATION_RATE_INCREASE = 0.005
 
 
@@ -40,8 +36,6 @@ class DriftReport:
 
     @property
     def lost_edge_share(self) -> float:
-        # Against the edges that were there to lose, not against total churn:
-        # 3 losses out of 1246 edges is noise, not a reason to block.
         return (
             len(self.edges_lost) / self.edges_shared_before
             if self.edges_shared_before
@@ -92,9 +86,6 @@ def compare(
     previous_id: str = "previous",
     current_id: str = "current",
 ) -> DriftReport:
-    # Canonicalize the union so both sides get the same name mapping. Run
-    # separately, a shifted mention count could rename 'LLM' to 'LLMs' in one
-    # snapshot only, and every edge would look changed.
     merged, _, _, _ = canonicalize(previous + current)
     old = {r.arxiv_id: r for r in merged[: len(previous)]}
     new = {r.arxiv_id: r for r in merged[len(previous) :]}
