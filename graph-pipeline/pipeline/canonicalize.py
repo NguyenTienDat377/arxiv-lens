@@ -2,6 +2,7 @@ import argparse
 import re
 from collections import Counter, defaultdict
 
+from .extract_entities import repair
 from .models import Entity, ExtractionRecord, Relation
 from .ontology import RELATION_SPECS, EntityType
 from .snapshots import list_extracted, load_extractions
@@ -94,11 +95,12 @@ def resolve_types(
 
 def canonicalize(
     records: list[ExtractionRecord],
-) -> tuple[list[ExtractionRecord], dict[str, str], list[str]]:
+) -> tuple[list[ExtractionRecord], dict[str, str], list[str], list[str]]:
     names = canonical_names(records)
     types, unresolved = resolve_types(records, names)
 
     rewritten: list[ExtractionRecord] = []
+    repairs: list[str] = []
     for record in records:
         entities = {
             names[e.name]: Entity(name=names[e.name], type=types[names[e.name]])
@@ -112,20 +114,19 @@ def canonicalize(
             )
             for r in record.extraction.relations
         }
-        rewritten.append(
-            record.model_copy(
-                update={
-                    "extraction": record.extraction.model_copy(
-                        update={
-                            "entities": list(entities.values()),
-                            "relations": list(relations.values()),
-                        }
-                    )
-                }
-            )
+        merged = record.extraction.model_copy(
+            update={
+                "entities": list(entities.values()),
+                "relations": list(relations.values()),
+            }
         )
+        # Global type resolution can invalidate an edge that was legal under the
+        # per-paper types, so the ontology gets the last word after the merge.
+        merged, log = repair(merged)
+        repairs += [f"{record.arxiv_id}  {line}" for line in log]
+        rewritten.append(record.model_copy(update={"extraction": merged}))
 
-    return rewritten, names, unresolved
+    return rewritten, names, unresolved, repairs
 
 
 def main() -> None:
@@ -135,7 +136,7 @@ def main() -> None:
 
     snapshot_id = args.snapshot or list_extracted()[-1]
     records = load_extractions(snapshot_id)
-    merged, names, unresolved = canonicalize(records)
+    merged, names, unresolved, repairs = canonicalize(records)
 
     before = {e.name for r in records for e in r.extraction.entities}
     after = {e.name for r in merged for e in r.extraction.entities}
@@ -149,6 +150,10 @@ def main() -> None:
     for variant, canonical in sorted(names.items()):
         if variant != canonical:
             print(f"  {variant!r} -> {canonical!r}")
+
+    print(f"\nrepaired after merging ({len(repairs)}):")
+    for line in repairs:
+        print(f"  {line}")
 
     print(f"\ntype resolved by precedence only ({len(unresolved)}, review these):")
     for line in unresolved:
