@@ -1,8 +1,9 @@
-# Ingestion notes
+# Pipeline notes
 
-Personal reference for the ingestion stage — the reasoning that used to sit in code comments.
+Personal reference — the reasoning that used to sit in code comments.
 
-Files covered: `pipeline/models.py`, `pipeline/ingest_arxiv.py`, `pipeline/snapshots.py`.
+**Ingestion:** `models.py`, `ingest_arxiv.py`, `snapshots.py`
+**Graph:** `ontology.py`, `extract_entities.py`, `canonicalize.py`, `drift_detector.py`, `build_graph.py`, `consistency_checker.py`
 
 ---
 
@@ -150,6 +151,289 @@ round-tripped: 15 papers -> Paper
 dedupe 3 copies -> [('2608.12961', 3)]
 ```
 
+---
+
+# Graph stages
+
+## `ontology.py` — the schema everything rests on
+
+Six entity types, six relations, each with domain, range, and OWL-style properties. Derived by open coding a sample of the corpus: entity types from recurring noun phrases, relation types from verbs connecting two already-tagged nouns.
+
+### Deriving relations from verbs
+
+The filter that makes it tractable: **both ends must be one of the six entity types.** Verbs whose subject is the authors — *we introduce, we show, we demonstrate* — are rhetorical, not relations between entities. That one rule removes most of the noise from a verb tally.
+
+`COMPILES_TO` came from noticing that *compiles* kept landing in two buckets because it belonged to neither. A knowledge-compilation edge (a formalism translated into another representation) is genuinely distinct from `USES` and from `COMBINES`.
+
+`ADDRESSES` absorbed a candidate `APPLIED_TO`. Fewer, sharper relations beat more, blurrier ones — and the object's *type* still carries the distinction, since `ADDRESSES → TASK` and `ADDRESSES → PROBLEM` remain different claims.
+
+PROBLEM and TASK stayed separate on one operational test: **can you describe what a solution takes in and puts out?** Yes → TASK. No → PROBLEM.
+
+### Why the properties matter
+
+`transitive + irreflexive + asymmetric` together forbid cycles. That trio is what makes an SMT solver defensible rather than decorative — see `consistency_checker.py` below.
+
+### Gotchas
+
+> **`EXTENDS: "EXTENDS"` creates zero enum members.** A colon is an *annotation*, not an assignment. The class imports cleanly, has no members, and the failure surfaces far away when structured outputs receive an empty enum in the JSON schema. Use `=`.
+
+> **A trailing space in an enum value is invisible and fatal.** `COMPILES_TO = "COMPILES_TO "` becomes the literal in the JSON schema, so the model is asked to emit a value with a trailing space, and every `== "COMPILES_TO"` comparison silently fails.
+
+`StrEnum` (3.11+) rather than `Enum`: members *are* strings, so they serialize to plain JSON with no custom encoder and compare equal to string literals.
+
+### The `USES` widening
+
+`USES` originally had domain `{METHOD}`. Eight papers independently produced FORMALISM subjects — `ULLER USES first-order logic`, `probabilistic logic programming USES distribution semantics`. A formalism built out of another formalism is a true thing to say, so the domain was widened to `{METHOD, FORMALISM}`.
+
+Seven `COMPILES_TO` violations with METHOD subjects were **not** widened. Those split into two bugs wearing the same costume: the rule-8 error (naming the system rather than the representation) and entity mistyping. Widening would have legitimized both and deleted the rule's purpose.
+
+> The general lesson: when data violates the schema, decide whether the schema is too narrow or the data is wrong. Consistency isn't proof of correctness — eight papers agreeing about `USES` is a schema gap; seven papers making the same extraction error is still an error.
+
+Widening is backward-compatible with stored data; narrowing is not. A widened schema only makes previously-illegal edges legal, so nothing needs re-extracting.
+
+---
+
+## `extract_entities.py` — constrained extraction
+
+### Why closed enums
+
+`RelationType` as a closed `StrEnum` becomes a **decoding constraint** through structured outputs, not a prompt suggestion. The model cannot emit `IMPROVES_UPON` — the token isn't in the allowed set.
+
+Schema-free extraction (Microsoft's GraphRAG, `LLMGraphTransformer`) lets the model name its own types per document. Over 300 abstracts that yields `USES`, `uses`, `utilizes`, `LEVERAGES`, `IS_BUILT_ON` as five distinct relationship types, and the graph becomes unqueryable — no single traversal catches "method depends on component."
+
+`ConfigDict(extra="forbid")` makes Pydantic emit `additionalProperties: false`, which structured outputs require.
+
+### Why relation endpoints are strings, not nested `Entity` objects
+
+Nesting invites the model to invent a second, near-duplicate entity mid-relation. Strings force it to refer back to something it already listed, and `validate()` then checks every endpoint appears in `entities`.
+
+### Prompt rules earned from real failures
+
+Rules 4–8 all came from reading actual output, not from imagination: LaTeX in entity names, clause-length names, generic categories typed METHOD, `EVALUATED_ON` pointing at tasks, `PyTorch` typed MODEL, `COMPILES_TO` naming the system rather than the representation.
+
+Rule 7 (`EVALUATED_ON` needs a named dataset) **never worked** — the model reads "demonstrate through case studies" as evaluation and commits to the predicate before checking the object's type. That failure is what motivated `repair()`.
+
+### `repair()` — the ontology acts instead of reporting
+
+When an edge violates domain/range, ask the ontology which predicates *would* accept those endpoint types:
+
+| candidates | action |
+|---|---|
+| exactly one | rewrite the predicate — forced, not guessed |
+| zero | drop the edge — no legal name for that shape |
+| several | keep it, let `validate()` report — guessing would fabricate a claim |
+
+Five of eight legal type-pairs admit exactly one predicate, so most violations are mechanically fixable. `METHOD → TASK` admits only `ADDRESSES`; `METHOD → METHOD` admits `EXTENDS`, `USES`, and `COMBINES`, which are three genuinely different claims.
+
+The order of checks matters: missing endpoint → drop, irreflexive self-loop → drop, already legal → keep untouched (this branch is what makes it idempotent), then the candidate lookup.
+
+> The honest limit: repair assumes the entity *types* are right and only the predicate is wrong. Keep the rewrite log — it's the evidence that it isn't laundering garbage.
+
+### Nondeterminism and the reuse cache
+
+**The same prompt and the same abstract produce different graphs across runs.** Entities appear and vanish; `Gene Ontology` present in one run, absent the next. Not fixable through sampling parameters — Sonnet 5 rejects `temperature`/`top_p`/`top_k` alongside `output_config`.
+
+So reproducibility is architectural: extract once, key on `(arxiv_id, version)`, reuse verbatim forever. This is what makes drift measurable at all — a diff between snapshots is only meaningful if unchanged inputs produce unchanged outputs.
+
+> Open hole: the cache doesn't know about the prompt. Edit `ONTOLOGY_PROMPT` and it serves stale extractions from a different prompt. `--no-reuse` is the interim guard; hashing the prompt into extraction metadata is the fix.
+
+### API gotchas
+
+- **`max_tokens` caps thinking + response text together.** Adaptive thinking is on by default, so 4096 was consumed before the JSON closed, surfacing as `ValidationError: EOF while parsing a string` — a *truncation*, not malformed JSON. Fixed with 8192, `effort: "low"`, and a `stop_reason == "max_tokens"` guard so truncation reports itself.
+- **Prompt caching is prefix-matched.** Any byte change invalidates everything after it. Minimum cacheable prefix is 512 tokens on Opus, 1024 on Sonnet. Verify with `usage.cache_read_input_tokens`.
+- **Batch `custom_id` must match `^[a-zA-Z0-9_-]{1,64}$`** — arXiv ids contain a `.`, older ones a `/`. Sanitize forward and rebuild the reverse map from the submitted papers. Getting this wrong *silently* would be worse than the 400: results keyed `2608_12961` would never match a paper again, and the reuse cache would miss on every paper forever.
+- **Batch results arrive in arbitrary order**, keyed by `custom_id`.
+- `@functools.cache def _client()` defers construction, so importing the module doesn't require an API key.
+
+---
+
+## `canonicalize.py` — one node per concept
+
+Traversal is exact. `LLM` and `LLMs` as separate nodes means every query about language models returns half its answers. This matters far more for a graph than for vector RAG, where embeddings put those strings near each other anyway.
+
+### `normalize()` output is a key, never a name
+
+Aggressive normalization (lowercase, punctuation → space, strip plurals) produces a **grouping key only**. The name that reaches the graph is the most-mentioned real surface form. If normalized forms became names, the graph would read `llm`, `chain of thought`, `deepseek r1`.
+
+Winner selection is `min` on a three-part tuple: `(-count, len, alphabetical)`. Three levels because the first two genuinely tie, and a tie broken by dict order would give a different graph each run.
+
+> **`CLIPS` → `CLIP` was a real false merge.** CLIPS is an expert system shell; CLIP is OpenAI's vision model. The plural rule stripped `s` from a 5-letter acronym. Fixed by skipping all-uppercase words — `LLMs` has a lowercase `s` and is a plural, `CLIPS` is an acronym outright. **A bad merge is worse than a missed merge**, because it fabricates edges between unrelated things.
+
+### Type resolution is a cascade
+
+Merging names creates type conflicts — `Chain-of-Thought` was METHOD in six papers and FORMALISM in three, and Neo4j needs one label per node. Evidence strongest first:
+
+1. **Edge fit** — the ontology's domain/range constraints vote (resolved 8 of 22)
+2. **Majority** — mention counts, over survivors only (1 more)
+3. **Precedence** — `DATASET > MODEL > FORMALISM > METHOD > TASK > PROBLEM`, most concrete to most abstract (12, all logged for review)
+
+Stage 3 fires most on `TASK vs PROBLEM`, and there it isn't arbitrary — all six of those have definable I/O, so the I/O test says TASK.
+
+Only stage 3 appends to `unresolved`. That list is a **review queue**, not an error report: anything resolved by stages 1–2 has a justification, these have only a convention.
+
+### Repair runs again after merging
+
+Global type resolution can invalidate an edge that was legal under per-paper types. `ILP` typed TASK locally made `ADDRESSES` valid; resolved to FORMALISM corpus-wide, the same edge became illegal. Two edges on the current corpus. The ontology gets the last word after the merge.
+
+### Still unsolved
+
+String rules cannot connect an acronym to its expansion. `LLMs` (degree 20) and `Large Language Models` (degree 17) remain separate nodes — the graph's two biggest hubs, one concept. Needs a hand-curated alias table; ~20 pairs covers it, and only ~114 names appear in more than one paper anyway.
+
+---
+
+## `drift_detector.py` — a gate, not a dashboard
+
+### Explained vs unexplained churn
+
+Papers are partitioned into **added**, **removed**, and **shared**. Only shared papers at the same version count, because those are reused verbatim from the cache and *cannot legitimately change*. A difference there means something upstream moved: an edited prompt, `--no-reuse`, a changed ontology.
+
+Corpus growth is therefore invisible to the gate, which is correct — 150 new papers is not drift.
+
+A v1 → v2 paper is skipped entirely (`continue` before `shared += 1`), so revisions don't inflate the denominator. The cost: a revised paper's extraction is never checked at all.
+
+### Both snapshots are canonicalized together
+
+`canonicalize(previous + current)` then split by slice. Run separately, a shifted mention count could elect `LLM` in one snapshot and `LLMs` in the other, and *every* edge touching it would look changed.
+
+> The slice depends on `canonicalize()` preserving input order. Nothing enforces that — worth an `assert` on the id sequence, since this is a gate whose whole job is catching silent changes.
+
+### The whole diff is set difference
+
+Relations become `set[tuple[str, str, str]]`. Tuples are hashable and compare by value; two `Relation` model objects would compare by identity and every edge would look changed. Then `before - after` and `after - before` is the entire algorithm.
+
+### Thresholds are policy, kept at the top of the file
+
+Two metric bugs found by testing against known answers:
+
+- **`lost_edge_share` had the wrong denominator** — dividing by total churn made 3 losses with 0 gains read as 100%, blocking a build over 3 edges out of 1246. Now divided by the edges that existed to lose.
+- **Violations were counted, not rated** — growing the corpus 150 → 300 flagged "3 new violations", but a corpus twice the size carries twice the violations at identical quality. Now compared per-relation.
+
+> A gate that fires on healthy input is worse than no gate, because people learn to ignore it.
+
+### The thresholds are not empirical
+
+`changed_share` is bimodal, not continuous: cache hit → exactly 0%, cache miss → near 100% (the model rewrites most papers). No run lands in between, so 5% sits in a dead zone. The honest value is **0** — any change to a cached paper is a bug worth investigating.
+
+`sys.exit(1)` is what makes it enforcement rather than monitoring: `drift_detector && build_graph`.
+
+---
+
+## `build_graph.py` — loading Neo4j
+
+### Cypher cannot parameterize labels or relationship types
+
+`MERGE (a)-[r:$predicate]->(b)` is a syntax error; only property *values* can be parameters. So labels and types are interpolated into the query string.
+
+That is safe **only** because both come from closed enums — `LABELS.values()` and `RelationType`. Nothing model-generated ever reaches those slots; `name` travels as a bound `$` parameter. The enum built for structured outputs is now doing injection-safety duty.
+
+### `MERGE` on identity, `SET` afterwards
+
+```cypher
+MERGE (p:Paper {arxiv_id: row.arxiv_id})   -- identity only
+SET p.title = row.title                    -- everything else
+```
+
+`MERGE` matches the *entire* pattern given. With `title` inside the map, a corrected title next snapshot creates a second paper node.
+
+### Constraints before loading
+
+Each uniqueness constraint creates a backing index. **`MERGE` without an index is a full label scan** — with 1754 entities that's the difference between seconds and minutes. This is the most common reason people report Neo4j as slow.
+
+### Provenance turns accumulation into a feature
+
+```cypher
+ON CREATE SET r.first_seen = $snapshot, r.snapshots = [$snapshot]
+SET r.last_seen = $snapshot,
+    r.snapshots = CASE WHEN $snapshot IN r.snapshots
+                       THEN r.snapshots ELSE r.snapshots + $snapshot END
+```
+
+`ON CREATE` fires once; the bare `SET` fires every time. The `CASE` prevents a re-run from appending the same snapshot id twice.
+
+With that in place, merging into an existing graph gives history rather than a leak:
+
+- **current graph** = `last_seen = <latest>`
+- **graph at N** = `N IN r.snapshots`
+- **drift** = set difference between those filters
+- **confidence** = `size(r.snapshots)` — an edge seen in five snapshots is more trustworthy than one seen once, which partly mitigates the nondeterminism
+
+Without provenance, wipe-and-rebuild would be the better choice.
+
+### `reconcile_labels` prevents split entities
+
+Resolved types are corpus-dependent — `Lean` came out FORMALISM on a 1–1 vote by precedence alone. If it flips next snapshot, `MERGE` would create a *second* node under the new label and split the edges. So existing labels are read once, compared in Python, and mismatches are relabelled (`REMOVE n:Formalism SET n:Method`) grouped by `(old, new)`.
+
+### `UNWIND` batching
+
+Send a list of dicts as one parameter and let the server loop: one round trip, one transaction, one query plan, instead of ~5000 separate calls. `collect()` turns rows into a list; `UNWIND` is its inverse.
+
+Relations are grouped by `(subject_label, predicate, object_label)` for two reasons at once — each query can name its labels literally, *and* `MATCH (a:Method {name: …})` hits the unique index. An unlabeled match would scan the whole database per row.
+
+### Idempotency is verified, not assumed
+
+`result.consume().counters.nodes_created` is the server's own count. A second run reporting `+0` across the board is evidence.
+
+### Paper nodes
+
+Chosen over entities-only because 25% of entity mentions have no relation edge and would be unreachable. `MENTIONED_IN` rescues them, adds provenance to every answer, and gives a second connectivity route — which matters when 94% of entity names appear in only one paper.
+
+**Paper-to-paper edges are not stored.** `CITES` isn't available (arXiv returns no references — that needs Semantic Scholar or OpenAlex). "Builds on" is *derivable* from the entity graph, but the naive rule ("an earlier paper mentions the thing you build on") yields 370 mostly-junk edges like *both papers mention LLMs*; restricting to entities the earlier paper actually contributed gives 26 real ones. Either way it's an **inference, not evidence** — materializing it would make the drift detector report churn in derived edges and make Z3 verify our own conclusions. Derive at query time instead.
+
+---
+
+## `consistency_checker.py` — Z3 over the assembled graph
+
+### What it catches that `validate()` cannot
+
+```
+A EXTENDS B   (paper 1)
+B EXTENDS C   (paper 2)
+C EXTENDS A   (paper 3)
+```
+
+Transitivity closes this into `A EXTENDS A`; irreflexivity forbids it. **No single edge is wrong** — the contradiction exists only in the conjunction, and it spans three papers no human read together.
+
+### Why a solver rather than a DFS
+
+For `EXTENDS` alone, a cycle-detecting traversal would do. The solver earns its place when constraints interact — asymmetry, type disjointness, and domain/range simultaneously — where hand-rolled checks multiply and a solver just takes the conjunction. Be honest about which claim is being made.
+
+The real payoff is the **unsat core**: the minimal set of edges that cannot coexist, rather than "something is wrong somewhere."
+
+### Encoding decides tractability
+
+The first version quantified over every node pair — `itertools.product(nodes, repeat=2)` — and timed out. `ADDRESSES` alone would need ~500k booleans instead of 481.
+
+Fix: **variables only for pairs the edges can actually reach.** `scope = _closure(pairs) if spec.transitive else set(pairs)`. Closures are tiny in practice — `EXTENDS` 33 edges → 34 closure pairs, `USES` 410 → 444. Whole check runs in ~5s.
+
+> Same constraints, same solver, 100× difference. With SMT the encoding matters more than the solver.
+
+### Tracked vs plain assertions
+
+Edges use `assert_and_track` so they appear in the unsat core. Ontology properties are added plainly, so **a core names only edges, never the schema** — the schema is assumed correct by construction.
+
+Entity types are `z3.Const` over an `EnumSort`. A constant holds exactly one value, so type disjointness is structural rather than asserted.
+
+### Finding more than one conflict
+
+`solver.check()` returns one core. To enumerate, drop one edge from that core and re-solve until sat.
+
+### Verified by injection
+
+The real graph has no structural contradictions — 33 `EXTENDS` edges over 300 papers is too sparse. So the checker was verified by injecting a 3-cycle and a mutual `USES` pair; it returned exactly the 3 conflicting edges and exactly the 2. **"No errors found" is indistinguishable from a broken checker until you make it find something.**
+
+Its value today is preventive; it becomes load-bearing as lineage chains lengthen.
+
+---
+
+## Infrastructure gotchas
+
+- **Neo4j has two ports.** 7474 is the HTTP browser; **7687 is Bolt**, which drivers speak. `bolt://localhost:7687`, not the URL you log into.
+- **`os.getenv` returns `None` for a missing key** and doesn't raise. `GraphDatabase.driver(None, ...)` then fails several lines later with an error that says nothing about environment variables. Use `os.environ[...]` when the program genuinely cannot run without the value.
+- **Run the container with a named volume.** `docker run` without `-v` keeps data in the container's writable layer; a Docker Desktop reset takes the container, the image, and the graph with it. `-v arxiv_lens_neo4j_data:/data --restart unless-stopped`.
+- The port opens several seconds before Neo4j accepts Bolt connections — poll `verify_connectivity()` rather than sleeping a fixed time.
+
+---
+
 ## Next
 
-Entity/relation extraction with Claude, reading a snapshot id. First decision is what counts as an entity in this domain — that comes before any prompt.
+Alias table (`LLM` ≡ `Large Language Models`), then retrieval: question → traversal → answer with citations. Nothing consumes the graph yet, which is what still separates this from GraphRAG. The golden QA eval comes after retrieval, because an eval needs something to evaluate — and it closes the real gap: every gate here measures *stability*, none measures *correctness*. A consistently wrong graph passes all of them.
