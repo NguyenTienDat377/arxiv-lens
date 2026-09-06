@@ -220,7 +220,7 @@ def main() -> None:
     records = load_extractions(snapshot_id)
     papers = load_snapshot(snapshot_id)
 
-    merged, _, unresolved = canonicalize(records)
+    merged, _, unresolved, repairs = canonicalize(records)
     types = {
         entity.name: entity.type
         for record in merged
