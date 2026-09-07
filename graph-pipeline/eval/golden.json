@@ -1,0 +1,152 @@
+[
+  {
+    "question": "What builds on Logic Tensor Networks?",
+    "intent": "LINEAGE",
+    "entities": ["Logic Tensor Networks"],
+    "expect_entities": ["sLTN", "FOT-LTN", "Iterative Logic Tensor Network"],
+    "expect_papers": ["2608.11136", "2606.29972", "2604.26521"],
+    "ground_truth": "Each abstract states an extension of LTN: sLTN 'an extension of LTN', FOT-LTN 'an extension of Logic Tensor Networks', iLTN introduced as an LTN architecture for multi-step deduction. LTN-GAN (2601.03839) is excluded: it incorporates LTNs rather than extending them."
+  },
+  {
+    "question": "What extends LTN?",
+    "intent": "LINEAGE",
+    "entities": ["LTN"],
+    "expect_entities": ["sLTN", "FOT-LTN", "Iterative Logic Tensor Network"],
+    "expect_papers": ["2608.11136", "2606.29972", "2604.26521"],
+    "ground_truth": "Same as the previous case, asked with the acronym. Exercises the alias table: LTN must resolve to Logic Tensor Networks."
+  },
+  {
+    "question": "How is sLTN related to first-order logic?",
+    "intent": "PATH_BETWEEN",
+    "entities": ["sLTN", "first-order logic"],
+    "expect_entities": ["sLTN", "Logic Tensor Networks", "first-order logic"],
+    "expect_papers": ["2608.11136"],
+    "ground_truth": "2608.11136: sLTN extends LTN, and LTN interprets first-order logic through tensor operations. The link is transitive, never direct."
+  },
+  {
+    "question": "What datasets was Moose evaluated on?",
+    "intent": "EVALUATED_ON",
+    "entities": ["Moose"],
+    "expect_entities": ["MNIST-with-ontology", "Pizzaïolo"],
+    "expect_papers": ["2608.12961"],
+    "ground_truth": "2608.12961 names both benchmarks in its evaluation."
+  },
+  {
+    "question": "What benchmarks was ARTEMIS tested on?",
+    "intent": "EVALUATED_ON",
+    "entities": ["ARTEMIS"],
+    "expect_entities": ["Time-IMM", "DSLOB", "Jane Street", "Optiver"],
+    "expect_papers": ["2603.18107"],
+    "ground_truth": "2603.18107 evaluates ARTEMIS on these four financial datasets."
+  },
+  {
+    "question": "What methods use Answer Set Programming?",
+    "intent": "WHAT_USES",
+    "entities": ["Answer Set Programming"],
+    "expect_entities": ["NeurASP", "LLM+ASP"],
+    "expect_papers": ["2606.10787", "2604.27960"],
+    "ground_truth": "2606.10787: NeurASP reasons over concepts using rules written in ASP. 2604.27960: LLM+ASP translates natural language into ASP."
+  },
+  {
+    "question": "What uses ASP?",
+    "intent": "WHAT_USES",
+    "entities": ["ASP"],
+    "expect_entities": ["NeurASP", "LLM+ASP"],
+    "expect_papers": ["2606.10787", "2604.27960"],
+    "ground_truth": "Same as the previous case with the acronym, testing that ASP resolves to Answer Set Programming."
+  },
+  {
+    "question": "What methods address hallucination?",
+    "intent": "WHAT_ADDRESSES",
+    "entities": ["hallucination"],
+    "expect_entities": ["RAG", "TRISM"],
+    "expect_papers": ["2601.04568", "2606.15646"],
+    "ground_truth": "2601.04568 frames RAG as overcoming hallucination. 2606.15646 introduces TRISM against LLMs' tendency to hallucinate in legal contexts. Other methods in the graph are not asserted here; recall only requires these two to appear."
+  },
+  {
+    "question": "What tackles logical reasoning?",
+    "intent": "WHAT_ADDRESSES",
+    "entities": ["logical reasoning"],
+    "expect_entities": ["MatrixCoT", "large ontology model"],
+    "expect_papers": ["2601.10101", "2604.09608"],
+    "ground_truth": "2601.10101 introduces MatrixCoT for logical reasoning where plain CoT falls short. 2604.09608's LOM integrates logical reasoning end to end. Chain-of-Thought is deliberately not expected: its abstract says CoT falls short on logical reasoning rather than addressing it."
+  },
+  {
+    "question": "What is ARTEMIS connected to?",
+    "intent": "NEIGHBOURHOOD",
+    "entities": ["ARTEMIS"],
+    "expect_entities": ["Laplace Neural Operator", "neural stochastic differential equation", "symbolic bottleneck"],
+    "expect_papers": ["2603.18107"],
+    "ground_truth": "2603.18107 describes ARTEMIS as combining exactly these three components."
+  },
+  {
+    "question": "What is Logic Tensor Networks connected to?",
+    "intent": "NEIGHBOURHOOD",
+    "entities": ["Logic Tensor Networks"],
+    "expect_entities": ["first-order logic"],
+    "expect_papers": [],
+    "ground_truth": "LTN's defining component per 2608.11136 and 2601.03839."
+  },
+  {
+    "question": "What is Euclid-MCP connected to?",
+    "intent": "NEIGHBOURHOOD",
+    "entities": ["Euclid-MCP"],
+    "expect_entities": ["SWI-Prolog", "Euclid-IR"],
+    "expect_papers": ["2607.21412"],
+    "ground_truth": "2607.21412 describes Euclid-MCP consuming both components."
+  },
+  {
+    "question": "What is the relationship between Euclid-MCP and LiFTER?",
+    "intent": "PATH_BETWEEN",
+    "entities": ["Euclid-MCP", "LiFTER"],
+    "expect_entities": [],
+    "expect_papers": [],
+    "expect_empty": true,
+    "ground_truth": "Euclid-MCP (2607.21412, IT security reasoning) and LiFTER (2608.06765, temporal link forecasting) share no entity. There is genuinely no connection, and the system must say so rather than invent one."
+  },
+  {
+    "question": "How is ARTEMIS related to Moose?",
+    "intent": "PATH_BETWEEN",
+    "entities": ["ARTEMIS", "Moose"],
+    "expect_entities": [],
+    "expect_papers": [],
+    "expect_empty": true,
+    "ground_truth": "2603.18107 (quantitative finance) and 2608.12961 (description-logic concept learning) share no entity. No path exists."
+  },
+  {
+    "question": "How is NeurASP related to ARTEMIS?",
+    "intent": "PATH_BETWEEN",
+    "entities": ["NeurASP", "ARTEMIS"],
+    "expect_entities": [],
+    "expect_papers": [],
+    "expect_empty": true,
+    "ground_truth": "Both are neuro-symbolic frameworks but share no entity in the corpus. Topical similarity is not a graph connection."
+  },
+  {
+    "question": "What datasets was Euclid-MCP evaluated on?",
+    "intent": "EVALUATED_ON",
+    "entities": ["Euclid-MCP"],
+    "expect_entities": [],
+    "expect_papers": [],
+    "expect_empty": true,
+    "ground_truth": "2607.21412 names no benchmark dataset, so the graph holds no EVALUATED_ON edge. The correct answer is that the graph does not say."
+  },
+  {
+    "question": "What uses the Quantum Blockchain Transformer?",
+    "intent": "WHAT_USES",
+    "entities": ["Quantum Blockchain Transformer"],
+    "expect_entities": [],
+    "expect_papers": [],
+    "expect_empty": true,
+    "ground_truth": "Invented entity, absent from the corpus. Entity linking must fail rather than fuzzy-match onto something unrelated."
+  },
+  {
+    "question": "What builds on ARTEMIS?",
+    "intent": "LINEAGE",
+    "entities": ["ARTEMIS"],
+    "expect_entities": [],
+    "expect_papers": [],
+    "expect_empty": true,
+    "ground_truth": "ARTEMIS is introduced in 2603.18107 and nothing in the corpus extends it. An empty lineage is the correct answer."
+  }
+]
