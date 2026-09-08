@@ -10,6 +10,7 @@ from .canonicalize import canonicalize
 from .models import ExtractionRecord, Paper
 from .ontology import EntityType, RelationType
 from .snapshots import list_extracted, load_extractions, load_snapshot
+from .events import publish_graph_updated
 
 load_dotenv()
 
@@ -243,12 +244,20 @@ def main() -> None:
         for line in relabelled:
             print(f"  relabelled {line}")
 
-        print(f"papers       +{load_papers(session, papers, snapshot_id)}")
-        print(f"entities     +{load_entities(session, types, snapshot_id)}")
-        print(f"mentions     +{load_mentions(session, merged, types, snapshot_id)}")
-        print(f"relations    +{load_relations(session, merged, types, snapshot_id)}")
+        counts = {
+            "papers": load_papers(session, papers, snapshot_id),
+            "entities": load_entities(session, types, snapshot_id),
+            "mentions": load_mentions(session, merged, types, snapshot_id),
+            "relations": load_relations(session, merged, types, snapshot_id),
+        }
+        for name, created in counts.items():
+            print(f"{name:<12} +{created}")
 
     driver.close()
+
+    # Announced only after the session closes, so the writes are committed
+    # before a consumer is told to go and read them.
+    publish_graph_updated(snapshot_id, counts)
     print(f"\n{len(unresolved)} entity types resolved by precedence only")
 
 

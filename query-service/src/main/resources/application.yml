@@ -1,6 +1,13 @@
 spring:
   application:
     name: query-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
+    consumer:
+      group-id: query-service
+      auto-offset-reset: latest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
   grpc:
     client:
       channel:
