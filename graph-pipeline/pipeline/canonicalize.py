@@ -28,6 +28,7 @@ ALIASES: dict[str, str] = {
     "RAG": "Retrieval-Augmented Generation",
     "LTN": "Logic Tensor Networks",
     "ASP": "Answer Set Programming",
+    "Answer Set Programs": "Answer Set Programming",
     "ILP": "Inductive Logic Programming",
     "SMT": "Satisfiability Modulo Theories",
     "KG": "knowledge graph",

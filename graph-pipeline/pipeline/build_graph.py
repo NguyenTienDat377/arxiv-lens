@@ -192,11 +192,16 @@ def load_relations(
             MATCH (a:{subject_label} {{name: row.subject}})
             MATCH (b:{object_label} {{name: row.object}})
             MERGE (a)-[r:{predicate}]->(b)
-            ON CREATE SET r.first_seen = $snapshot, r.snapshots = [$snapshot]
+            ON CREATE SET r.first_seen = $snapshot, r.snapshots = [$snapshot],
+                          r.papers = []
             SET r.last_seen = $snapshot,
                 r.snapshots = CASE
                     WHEN $snapshot IN r.snapshots THEN r.snapshots
                     ELSE r.snapshots + $snapshot
+                END,
+                r.papers = CASE
+                    WHEN row.arxiv_id IN r.papers THEN r.papers
+                    ELSE r.papers + row.arxiv_id
                 END
             """,
             rows=rows,

@@ -11,6 +11,9 @@ from pipeline.canonicalize import _group_key
 
 MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
+# Calibrated on the entity vocabulary: every correct match scores above it,
+# every wrong one below. "neural nets" -> "deep learning" sits at 0.68.
+LINK_THRESHOLD = 0.80
 
 
 class QueryIntent(StrEnum):
@@ -112,13 +115,35 @@ def _name_index() -> dict[str, str]:
         return {_group_key(row["name"]): row["name"] for row in rows}
 
 
+@functools.cache
+def _entity_vectors():
+    from retrieval.vector_rag import _model
+
+    names = sorted(set(_name_index().values()))
+    return names, _model().encode(names, normalize_embeddings=True,
+                                  show_progress_bar=False)
+
+
+def _nearest(text: str) -> str | None:
+    try:
+        import numpy as np
+
+        from retrieval.vector_rag import _model
+    except ImportError:
+        return None
+
+    names, vectors = _entity_vectors()
+    scores = vectors @ _model().encode([text], normalize_embeddings=True)[0]
+    best = int(np.argmax(scores))
+    return names[best] if scores[best] >= LINK_THRESHOLD else None
+
+
 def link(text: str) -> str | None:
     index = _name_index()
     key = _group_key(text)
     if key in index:
         return index[key]
-    hits = [name for k, name in index.items() if key and (key in k or k in key)]
-    return min(hits, key=len) if hits else None
+    return _nearest(text)
 
 
 def plan(question: str) -> QueryPlan:

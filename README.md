@@ -230,6 +230,14 @@ A cycle-detecting traversal would find that one case. The solver earns its place
 
 The boundary is a genuine language mismatch. The pipeline is Python because the ML/NLP ecosystem (Z3 bindings, MLflow, evidently, the Anthropic SDK) lives there. The query service is Java because Spring Boot's HTTP server, Kafka client, and observability tooling are more mature for API serving.
 
+### Why Kafka and gRPC rather than one of them?
+
+Two communication patterns with genuinely different requirements. Query execution is synchronous — a client is waiting for an answer, so gRPC. Graph updates are fire-and-forget — the pipeline has finished its work and should not block on whether the API layer acknowledged anything, so Kafka.
+
+The volume does not justify Kafka on its own, and it is worth saying so: a graph rebuild produces roughly one `graph.updated` event per day. An HTTP call from the pipeline, or a TTL on the query cache, would solve the immediate cache-invalidation problem with far less operational weight.
+
+The argument for Kafka here is decoupling, not throughput. The pipeline should not know who consumes its output, how many consumers exist, or whether any of them are currently running. A consumer that was down for an hour replays from its offset and catches up; an HTTP call to a service that is down is simply lost, and it couples the pipeline's success to the API layer's availability. That property is worth having at one message per day or a million.
+
 ### Why hexagonal architecture in the Spring Boot service?
 
 The outbound gRPC adapter can be swapped for an in-memory mock in tests without touching the domain or application layer. Textbook-motivated, not architecture for its own sake.
