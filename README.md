@@ -21,7 +21,9 @@ The system is split into two services connected by Kafka (async events) and gRPC
 
 ## Current status
 
-The Python pipeline runs end to end. The Java service has not been started.
+Both services run and talk to each other. A REST call to the Java service crosses gRPC
+into the Python pipeline, traverses Neo4j, and comes back with cited facts. What remains
+is the Kafka link between them, and deployment.
 
 | Stage | Status |
 | ----- | ------ |
@@ -37,7 +39,30 @@ The Python pipeline runs end to end. The Java service has not been started.
 | Golden QA eval | ✅ 18 cases, 12 positive and 6 negative |
 | Vector-RAG baseline and comparison | ✅ graph 100% vs vector 61% paper recall |
 | Docker Compose (Neo4j + Kafka) | ✅ |
-| Kafka producers, MLflow, query-service | ⬜ not started |
+| gRPC contract + Python server | ✅ `GraphRagService`: Query, GetGraphStats |
+| Spring Boot service (hexagonal) | ✅ REST → gRPC → graph, end to end |
+| Caffeine cache on query results | ✅ awaiting Kafka-driven eviction |
+| Kafka producer/consumer, MLflow, k8s | ⬜ not started |
+
+The path a request actually takes:
+
+```
+POST /api/query  →  QueryController  →  QueryUseCase (cached)
+                 →  GraphRagGrpcAdapter  ──gRPC──▶  Python GraphRagService
+                                                 →  Neo4j traversal
+                                                 →  cited facts + generated answer
+```
+
+```json
+{ "answer": "The graph holds no facts matching that traversal.",
+  "facts": [], "intent": "LINEAGE",
+  "linkedEntities": ["ARTEMIS"], "unresolvedEntities": [],
+  "status": "NO_FACTS", "snapshotId": "2026-08-16T04-37-21Z" }
+```
+
+`status` carries what HTTP codes cannot: `ENTITY_NOT_FOUND` means the name resolved to no
+node, `NO_FACTS` means it resolved and nothing is asserted about it. Both return 200,
+because the query succeeded — "nothing is connected to that" is an answer.
 
 A representative query the graph answers today: *`first-order logic` connects 66 distinct pairs of papers* — a relationship no single abstract contains and no vector search over chunks would surface.
 
@@ -112,7 +137,7 @@ This table is not documentation. It is used four times:
           ┌───────────────────┘
           ▼  Kafka
 ┌──────────────────────────────────────────────────────────────┐
-│         query-service (Java / Spring Boot)      ⬜ planned    │
+│         query-service (Java / Spring Boot)                    │
 │                                                              │
 │  REST API (OpenAPI)                                          │
 │  ┌──────────────┐    ┌──────────────┐    ┌────────────────┐ │
@@ -152,8 +177,9 @@ This table is not documentation. It is used four times:
 | Embeddings (baseline + linking) | sentence-transformers (MiniLM)       | ✅ |
 | Embedding drift detection     | evidently AI                           | ⬜ |
 | Message broker                | Apache Kafka (broker up, no producer)  | ◐ |
-| API framework                 | Spring Boot 3 (Java 21)                | ⬜ |
-| Build tool                    | Gradle                                 | ⬜ |
+| API framework                 | Spring Boot 4 (Java 21)                | ✅ |
+| Service contract              | gRPC + protobuf                        | ✅ |
+| Build tool                    | Gradle                                 | ✅ |
 | Observability                 | Prometheus + Grafana                   | ⬜ |
 | Container orchestration (dev) | Docker Compose                         | ✅ |
 | Container orchestration (prod-like) | k3s                              | ⬜ |
@@ -190,7 +216,14 @@ arxiv-lens/
 │   └── Dockerfile
 ├── proto/graphrag.proto             # GraphRagService: Query, GetGraphStats
 ├── infra/docker-compose.yml         # Neo4j + Kafka (KRaft), named volumes
-├── query-service/                   # ⬜ Java Spring Boot service (hexagonal)
+├── query-service/                   # Spring Boot 4, hexagonal
+│   ├── build.gradle                 # protobuf plugin points at ../proto
+│   └── src/main/java/com/arxivlens/queryservice/
+│       ├── domain/                  # records and enums, no framework, no proto
+│       ├── application/             # GraphPort (the port), QueryUseCase
+│       ├── adapter/out/grpc/        # the only place protobuf types appear
+│       ├── adapter/in/web/          # REST controller, request DTO, error handling
+│       └── config/                  # Caffeine cache
 ├── k8s/                             # ⬜ k3s manifests
 ├── docs/comment.md                  # design rationale notes
 ├── LICENSE
@@ -276,7 +309,18 @@ The boundary is a genuine language mismatch. The pipeline is Python because the 
 
 ### Why hexagonal architecture in the Spring Boot service?
 
-The outbound gRPC adapter can be swapped for an in-memory mock in tests without touching the domain or application layer. Textbook-motivated, not architecture for its own sake.
+`domain/` and `application/` import nothing from protobuf and nothing from Spring — the
+generated `QueryResponse`, `Fact` and enum types appear in exactly one class,
+`GraphRagGrpcAdapter`, which translates them into the service's own records.
+
+That constraint is the whole point. Without it the gRPC contract silently becomes the
+domain model, and changing transport means rewriting the application. With it,
+`GraphPort` is a two-method interface that an in-memory fake can satisfy in a test with no
+Spring context and no running Python service.
+
+The enum mapping is by **name**, never ordinal: `RELATION_TYPE_COMPILES_TO` →
+`COMPILES_TO`. Ordinal mapping would silently return the wrong constant the day either
+enum is reordered. It caught a real typo the first time it ran.
 
 ---
 
@@ -306,8 +350,8 @@ The outbound gRPC adapter can be swapped for an in-memory mock in tests without 
 
 - [x] `proto/` — gRPC contract definition
 - [x] `graph-pipeline` — gRPC server exposing retrieval and graph stats
-- [ ] `query-service` — Spring Boot REST API (hexagonal)
-- [ ] `query-service` — gRPC outbound adapter
+- [x] `query-service` — Spring Boot REST API (hexagonal)
+- [x] `query-service` — gRPC outbound adapter
 - [ ] `query-service` — Kafka consumer + cache invalidation
 - [x] `infra/` — Docker Compose (Neo4j + Kafka, KRaft, named volumes)
 - [ ] `infra/` — Prometheus + Grafana dashboards
@@ -371,6 +415,30 @@ python -m retrieval.grpc_server --port 50051
 
 Extraction is cached by `(arxiv_id, version)`, so re-running it only calls the API for
 papers that are new or revised. The Neo4j browser is at <http://localhost:7474>.
+
+**Run the API**
+
+```bash
+cd ../query-service
+./gradlew bootRun        # http://localhost:8082
+
+curl -s localhost:8082/api/stats
+curl -s -X POST localhost:8082/api/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What builds on Logic Tensor Networks?"}'
+```
+
+Sending `intent` and `entities` alongside the question skips the planner entirely — no
+model call, deterministic, which is what the integration tests use:
+
+```bash
+-d '{"question":"...","intent":"LINEAGE","entities":["Logic Tensor Networks"]}'
+```
+
+Port 8082 rather than 8080 because Docker Desktop holds 8080 and 8081 on the development
+machine; change `server.port` in `application.yml` if yours are free. The gRPC stubs are
+generated by the Gradle protobuf plugin from `../proto`, so both services always build
+from one contract.
 
 Compose reads `${NEO4J_USERNAME}` and `${NEO4J_PASSWORD}` from an `.env` beside the
 compose file, falling back to `neo4j`/`password`. Either create `infra/.env` with those

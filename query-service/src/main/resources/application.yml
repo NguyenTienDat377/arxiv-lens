@@ -1,0 +1,20 @@
+spring:
+  application:
+    name: query-service
+  grpc:
+    client:
+      channel:
+        graphrag:
+          target: static://localhost:50051
+
+server:
+  port: 8082
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: always

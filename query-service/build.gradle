@@ -5,7 +5,7 @@ plugins {
 	id 'com.google.protobuf' version '0.9.6'
 }
 
-group = 'com.queryservice'
+group = 'com.arxivlens'
 version = '0.0.1-SNAPSHOT'
 
 java {
@@ -25,6 +25,10 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
+	implementation 'org.springframework.boot:spring-boot-starter-cache'
+	implementation 'com.github.ben-manes.caffeine:caffeine'
+	implementation 'io.micrometer:micrometer-registry-prometheus'
+	compileOnly 'org.apache.tomcat:annotations-api:6.0.53'
 	testImplementation 'org.springframework.boot:spring-boot-starter-actuator-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-grpc-client-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-kafka-test'
@@ -35,4 +39,33 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+}
+
+// The contract lives outside this module, shared with the Python service.
+sourceSets {
+	main {
+		proto {
+			srcDir '../proto'
+		}
+	}
+}
+
+// Versions match what Spring Boot 4 manages for grpc and protobuf, so the
+// generated code and the runtime cannot drift apart.
+protobuf {
+	protoc {
+		artifact = 'com.google.protobuf:protoc:4.35.1'
+	}
+	plugins {
+		grpc {
+			artifact = 'io.grpc:protoc-gen-grpc-java:1.83.1'
+		}
+	}
+	generateProtoTasks {
+		all().each { task ->
+			task.plugins {
+				grpc {}
+			}
+		}
+	}
 }

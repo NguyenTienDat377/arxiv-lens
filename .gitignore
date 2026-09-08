@@ -651,4 +651,3 @@ dist/
 # protoc output, regenerate with the command in the README
 graph-pipeline/generated/
 
-docs/comment.md
