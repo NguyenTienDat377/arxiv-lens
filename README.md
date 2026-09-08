@@ -33,7 +33,11 @@ The Python pipeline runs end to end. The Java service has not been started.
 | Drift gate | ✅ blocks promotion, non-zero exit |
 | Neo4j graph builder | ✅ 2054 nodes, ~3300 edges, idempotent |
 | Z3 consistency checker | ✅ minimal unsat cores |
-| Retrieval, eval, MLflow, Kafka, query-service | ⬜ not started |
+| GraphRAG retrieval with citations | ✅ 6 traversal intents, hybrid entity linking |
+| Golden QA eval | ✅ 18 cases, 12 positive and 6 negative |
+| Vector-RAG baseline and comparison | ✅ graph 100% vs vector 61% paper recall |
+| Docker Compose (Neo4j + Kafka) | ✅ |
+| Kafka producers, MLflow, query-service | ⬜ not started |
 
 A representative query the graph answers today: *`first-order logic` connects 66 distinct pairs of papers* — a relationship no single abstract contains and no vector search over chunks would surface.
 
@@ -145,12 +149,14 @@ This table is not documentation. It is used four times:
 | Formal consistency checking   | Z3 (SMT solver)                        | ✅ |
 | Corpus source                 | arXiv API                              | ✅ |
 | Experiment / graph versioning | MLflow                                 | ⬜ |
-| Embedding drift detection     | evidently AI, sentence-transformers    | ⬜ |
-| Message broker                | Apache Kafka                           | ⬜ |
+| Embeddings (baseline + linking) | sentence-transformers (MiniLM)       | ✅ |
+| Embedding drift detection     | evidently AI                           | ⬜ |
+| Message broker                | Apache Kafka (broker up, no producer)  | ◐ |
 | API framework                 | Spring Boot 3 (Java 21)                | ⬜ |
 | Build tool                    | Gradle                                 | ⬜ |
 | Observability                 | Prometheus + Grafana                   | ⬜ |
-| Container orchestration       | Docker Compose (dev) · k3s (prod-like) | ⬜ |
+| Container orchestration (dev) | Docker Compose                         | ✅ |
+| Container orchestration (prod-like) | k3s                              | ⬜ |
 
 Drift detection is currently **structural** — a diff of the extracted graph between snapshots, used as a promotion gate. Distributional (embedding) drift is a separate, planned addition; the two measure different things and are not alternatives.
 
@@ -173,16 +179,19 @@ arxiv-lens/
 │   │   └── consistency_checker.py   # Z3 encoding of the ontology's properties
 │   ├── data/raw/<snapshot-id>/      # immutable corpus snapshots (gitignored)
 │   ├── data/extracted/<snapshot-id>/# extraction results, keyed by (arxiv_id, version)
-│   ├── retrieval/                   # ⬜ GraphRAG query logic
-│   ├── eval/                        # ⬜ golden QA set, quality gate
-│   ├── kafka/                       # ⬜ Kafka producers
-│   ├── mlflow/                      # ⬜ graph version tracking
+│   ├── retrieval/
+│   │   ├── graph_rag.py             # plan → link → traverse → cited answer
+│   │   └── vector_rag.py            # conventional RAG baseline over abstracts
+│   ├── eval/
+│   │   ├── golden.json              # questions with ground truth from the abstracts
+│   │   ├── run_eval.py              # scores retrieval, exits 1 below threshold
+│   │   └── compare.py               # graph vs vector on the same questions
 │   ├── requirements.txt
 │   └── Dockerfile
-├── proto/                           # ⬜ gRPC contracts
-├── infra/                           # ⬜ docker-compose, Prometheus, Grafana
-├── k8s/                             # ⬜ k3s manifests
+├── proto/graphrag.proto             # GraphRagService: Query, GetGraphStats
+├── infra/docker-compose.yml         # Neo4j + Kafka (KRaft), named volumes
 ├── query-service/                   # ⬜ Java Spring Boot service (hexagonal)
+├── k8s/                             # ⬜ k3s manifests
 ├── docs/comment.md                  # design rationale notes
 ├── LICENSE
 └── README.md
@@ -226,17 +235,44 @@ It exits non-zero, so `drift_detector && build_graph` refuses to load a bad snap
 
 A cycle-detecting traversal would find that one case. The solver earns its place when constraints interact — asymmetry, type disjointness, and domain/range simultaneously — where hand-rolled checks multiply and a solver simply takes the conjunction. It also returns a **minimal unsat core**: the specific edges that cannot coexist, rather than "something is wrong."
 
+### Why Kafka for roughly one event a day?
+
+A graph rebuild emits one `graph.updated` event, and rebuilds happen daily at most.
+That is nowhere near the volume Kafka is built for, and an HTTP call from the pipeline
+to the query service would move the same byte.
+
+The reason is coupling, not throughput. With a direct call the pipeline has to know who
+consumes its output, how many consumers there are, and whether they are up — and a
+rebuild would fail, or silently drop the notification, because an unrelated service was
+restarting. With a log, the pipeline appends and stops caring. A consumer that was down
+for an hour resumes from its offset and catches up; a second consumer can be added later
+without the pipeline changing at all.
+
+That argument holds at one message a day exactly as it holds at a million a second,
+because it is about who depends on whom rather than how much data moves. The volume here
+does not justify the operational weight on its own, and this README would rather say so
+than imply a scale that does not exist.
+
+### Why a vector baseline sits in the repo
+
+`retrieval/vector_rag.py` is a conventional RAG implementation over the same corpus — one
+abstract per chunk, MiniLM embeddings, top-k cosine — and `eval/compare.py` runs the same
+golden questions through both. Keeping a baseline you might lose to is the only way the
+graph's cost is answerable rather than asserted.
+
+On the current golden set the graph recovers every expected paper and the baseline
+recovers 61%. That number is directional at best: the questions were written against the
+ontology and the expected-paper lists are incomplete, both of which favour the graph.
+
+The result that does not depend on question wording is the negative cases. Top-k
+retrieval always returns k documents; there is no similarity threshold at which "nothing
+here is relevant" is the output. Asked how two unrelated papers relate, the baseline
+returns five plausible neighbours and the graph returns nothing, because nothing is
+asserted. Absence of an edge is information a vector index has no way to represent.
+
 ### Why two services?
 
 The boundary is a genuine language mismatch. The pipeline is Python because the ML/NLP ecosystem (Z3 bindings, MLflow, evidently, the Anthropic SDK) lives there. The query service is Java because Spring Boot's HTTP server, Kafka client, and observability tooling are more mature for API serving.
-
-### Why Kafka and gRPC rather than one of them?
-
-Two communication patterns with genuinely different requirements. Query execution is synchronous — a client is waiting for an answer, so gRPC. Graph updates are fire-and-forget — the pipeline has finished its work and should not block on whether the API layer acknowledged anything, so Kafka.
-
-The volume does not justify Kafka on its own, and it is worth saying so: a graph rebuild produces roughly one `graph.updated` event per day. An HTTP call from the pipeline, or a TTL on the query cache, would solve the immediate cache-invalidation problem with far less operational weight.
-
-The argument for Kafka here is decoupling, not throughput. The pipeline should not know who consumes its output, how many consumers exist, or whether any of them are currently running. A consumer that was down for an hour replays from its offset and catches up; an HTTP call to a service that is down is simply lost, and it couples the pipeline's success to the API layer's availability. That property is worth having at one message per day or a million.
 
 ### Why hexagonal architecture in the Spring Boot service?
 
@@ -257,20 +293,23 @@ The outbound gRPC adapter can be swapped for an in-memory mock in tests without 
 - [x] structural drift detector as a promotion gate
 - [x] Neo4j graph builder (idempotent, with provenance)
 - [x] Z3 consistency checker
-- [ ] alias table (`LLM` ≡ `Large Language Models`)
-- [ ] retrieval: question → traversal → answer with citations
-- [ ] golden QA eval harness
+- [x] alias table (`LLM` ≡ `Large Language Models`)
+- [x] retrieval: question → traversal → answer with citations
+- [x] hybrid entity linking (exact match, then embedding fallback above a calibrated threshold)
+- [x] vector-RAG baseline and a graph-vs-vector comparison
+- [x] golden QA eval harness (positive and negative cases)
 - [ ] embedding drift detection (evidently AI)
 - [ ] MLflow graph versioning
 - [ ] Kafka producers
 
 **query-service and infra**
 
-- [ ] `proto/` — gRPC contract definition
+- [x] `proto/` — gRPC contract definition
+- [x] `graph-pipeline` — gRPC server exposing retrieval and graph stats
 - [ ] `query-service` — Spring Boot REST API (hexagonal)
 - [ ] `query-service` — gRPC outbound adapter
 - [ ] `query-service` — Kafka consumer + cache invalidation
-- [ ] `infra/` — Docker Compose full stack
+- [x] `infra/` — Docker Compose (Neo4j + Kafka, KRaft, named volumes)
 - [ ] `infra/` — Prometheus + Grafana dashboards
 - [ ] `k8s/` — k3s manifests
 - [ ] CI: run ingest → extract → drift gate → build on every push
@@ -296,12 +335,7 @@ pip install -r requirements.txt
 
 cp .env.example .env     # then fill in ANTHROPIC_API_KEY and NEO4J_* values
 
-docker run -d --name neo4j \
-  -p 7474:7474 -p 7687:7687 \
-  -v arxiv_lens_neo4j_data:/data \
-  -e NEO4J_AUTH=neo4j/password \
-  --restart unless-stopped \
-  neo4j:5
+docker compose -f ../infra/docker-compose.yml up -d   # Neo4j + Kafka
 ```
 
 **Run the pipeline**
@@ -315,7 +349,33 @@ python -m pipeline.build_graph                        # gate, then load into Neo
 python -m pipeline.consistency_checker                # Z3 over the assembled graph
 ```
 
-Extraction is cached by `(arxiv_id, version)`, so re-running it only calls the API for papers that are new or revised. The Neo4j browser is at <http://localhost:7474>.
+**Ask it something**
+
+```bash
+python -m retrieval.graph_rag "What builds on Logic Tensor Networks?" --verbose
+python -m eval.run_eval --offline    # score retrieval, no API calls
+python -m eval.compare               # graph vs the vector baseline
+```
+
+**Serve it over gRPC**
+
+Stubs are generated rather than committed, so regenerate them after cloning or
+after editing the contract:
+
+```bash
+python -m grpc_tools.protoc -I ../proto \
+  --python_out=generated --grpc_python_out=generated ../proto/graphrag.proto
+
+python -m retrieval.grpc_server --port 50051
+```
+
+Extraction is cached by `(arxiv_id, version)`, so re-running it only calls the API for
+papers that are new or revised. The Neo4j browser is at <http://localhost:7474>.
+
+Compose reads `${NEO4J_USERNAME}` and `${NEO4J_PASSWORD}` from an `.env` beside the
+compose file, falling back to `neo4j`/`password`. Either create `infra/.env` with those
+two values or pass `--env-file`; don't point it at `graph-pipeline/.env`, which also
+holds the Anthropic key and has no business inside a database container.
 
 ---
 

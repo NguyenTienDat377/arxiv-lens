@@ -4,6 +4,7 @@ Personal reference — the reasoning that used to sit in code comments.
 
 **Ingestion:** `models.py`, `ingest_arxiv.py`, `snapshots.py`
 **Graph:** `ontology.py`, `extract_entities.py`, `canonicalize.py`, `drift_detector.py`, `build_graph.py`, `consistency_checker.py`
+**Serving:** `proto/graphrag.proto`, `retrieval/grpc_server.py`
 
 ---
 
@@ -422,6 +423,121 @@ Entity types are `z3.Const` over an `EnumSort`. A constant holds exactly one val
 The real graph has no structural contradictions — 33 `EXTENDS` edges over 300 papers is too sparse. So the checker was verified by injecting a 3-cycle and a mutual `USES` pair; it returned exactly the 3 conflicting edges and exactly the 2. **"No errors found" is indistinguishable from a broken checker until you make it find something.**
 
 Its value today is preventive; it becomes load-bearing as lineage chains lengthen.
+
+---
+
+# Serving
+
+## `proto/graphrag.proto` — the contract
+
+An interface definition language, not a program. `protoc` compiles it into real classes
+in both languages, so the Python server and the Java client share one definition and
+neither knows the other exists.
+
+### Field numbers are the wire format
+
+`= 1`, `= 2` are not defaults or values, they are the identifiers protobuf actually
+serializes. Names never cross the wire.
+
+- Renaming a field costs nothing. Changing its number breaks every deployed client.
+- **Never reuse a number** after removing a field: an old client sends 3 meaning the old
+  thing and new code reads it as the new thing. `reserved 3;` turns that into a compile
+  error.
+- Numbers 1-15 encode in one byte, 16 and up take two, so hot repeated fields belong in
+  the low range.
+
+### proto3 has no required fields
+
+Everything is optional and unset scalars read back as the zero value, so `""` and "never
+set" are indistinguishable unless a field is marked `optional`. That is why every enum
+starts at `_UNSPECIFIED = 0`: zero is what an unset field returns, and it must not
+silently mean the first real choice.
+
+### Enum values use C++ scoping ⚠️
+
+The trap that shaped every enum in this file. Enum *values* are siblings of their type,
+not children of it, so they must be unique across the whole package:
+
+```
+"EVALUATED_ON" is already defined in "arxivlens.v1".
+Note that enum values use C++ scoping rules, meaning that enum values are siblings of
+their type, not children of it.
+```
+
+`EVALUATED_ON` exists in both `QueryIntent` and `RelationType`, which is fine in Python
+(`QueryIntent.EVALUATED_ON` and `RelationType.EVALUATED_ON` coexist) and a compile error
+in protobuf. Hence `QUERY_INTENT_EVALUATED_ON` and `RELATION_TYPE_EVALUATED_ON`. The
+prefixing convention exists entirely because of this rule.
+
+> `option java_package: "..."` is a syntax error; protobuf wants `=`. Same shape as
+> writing `EXTENDS: "EXTENDS"` in a Python enum: a colon reads as a label and produces
+> something that is not what you meant. See [[the ontology notes]] above.
+
+### The design decisions
+
+**`QueryIntent` crosses the wire, both ways.** On the request it is an optional override;
+on the response it reports the traversal that actually ran, so a caller who sent
+`UNSPECIFIED` still learns what happened. Sending `intent` *and* `entities` together skips
+the planner completely, which makes a call deterministic, free, and free of model latency
+— useful for integration tests. Sending `intent` alone does not, because the planner is
+also what extracts the entity names.
+
+**`predicate` is an enum, not a string.** Adding a relation type now requires a contract
+change, which is correct: it changes what the graph can express. A string would let the
+wire format drift silently away from `RELATION_SPECS`.
+
+**Facts cross the wire, not only prose.** Provenance is the point of the project. If only
+the answer sentence crossed, a REST layer could never show which paper asserted what
+without querying again.
+
+**An unlinkable entity is a normal response, not a gRPC error.** `ResultStatus`
+distinguishes three real outcomes: `OK`, `ENTITY_NOT_FOUND` (the name did not resolve to
+any node), and `NO_FACTS` (it resolved, and nothing is asserted). "No connection" is an
+answer, not a failure — the negative eval cases are the system working. A gRPC `NOT_FOUND`
+would make the Java client throw, so callers would be catching exceptions to handle
+successful queries. gRPC error codes are reserved for Neo4j being down or a malformed
+request.
+
+### Generated stubs are not committed
+
+`graph-pipeline/generated/` is gitignored; regenerate with the command in the README.
+Java generates its own through Gradle. The alternative, committing them, means a fresh
+clone works without `protoc` at the cost of checked-in code that can go stale.
+
+---
+
+## `retrieval/grpc_server.py` — the server
+
+Thin: it maps the proto onto `retrieval/graph_rag.py` and adds nothing of its own.
+
+### The planner is consulted only for what the caller omitted
+
+```python
+if intent is None or not entities:
+    query_plan = plan(request.question)
+    intent = intent or query_plan.intent
+    entities = entities or list(query_plan.entities)
+```
+
+Supply both and no model call happens at all. Supply neither and it behaves like the CLI.
+
+### The empty paths return before the LLM
+
+`ENTITY_NOT_FOUND` and `NO_FACTS` are constructed and returned without calling `answer()`.
+No reason to pay for prose when there is nothing to say — and it means those paths can be
+tested for free.
+
+### Enum conversion is by name, not by number
+
+`_to_proto_intent` builds `QUERY_INTENT_` + the Python enum's value and looks it up.
+Mapping by ordinal would break the moment either enum is reordered; mapping by name fails
+loudly instead, at the point of the mistake.
+
+### `sys.path` insert for the generated code
+
+`graphrag_pb2_grpc.py` does a plain `import graphrag_pb2`, so the generated directory has
+to be importable on its own. The insert happens once, in this module, rather than being
+scattered.
 
 ---
 

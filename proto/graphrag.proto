@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package arxivlens.v1;
+
+option java_package = "com.arxivlens.graphrag.v1";
+option java_multiple_files = true;
+
+enum QueryIntent {
+  QUERY_INTENT_UNSPECIFIED = 0;
+  QUERY_INTENT_WHAT_ADDRESSES = 1;
+  QUERY_INTENT_WHAT_USES = 2;
+  QUERY_INTENT_EVALUATED_ON = 3;
+  QUERY_INTENT_LINEAGE = 4;
+  QUERY_INTENT_NEIGHBOURHOOD = 5;
+  QUERY_INTENT_PATH_BETWEEN = 6;
+}
+
+enum RelationType {
+  RELATION_TYPE_UNSPECIFIED = 0;
+  RELATION_TYPE_EXTENDS = 1;
+  RELATION_TYPE_USES = 2;
+  RELATION_TYPE_EVALUATED_ON = 3;
+  RELATION_TYPE_ADDRESSES = 4;
+  RELATION_TYPE_COMBINES = 5;
+  RELATION_TYPE_COMPILES_TO = 6;
+}
+
+enum ResultStatus {
+  RESULT_STATUS_UNSPECIFIED = 0;
+  RESULT_STATUS_OK = 1;
+  RESULT_STATUS_ENTITY_NOT_FOUND = 2;
+  RESULT_STATUS_NO_FACTS = 3;
+}
+
+message Fact {
+  string subject = 1;
+  RelationType predicate = 2;
+  string object = 3;
+  repeated string papers = 4;
+}
+
+message QueryRequest {
+  string question = 1;
+  QueryIntent intent = 2;
+  repeated string entities = 3;
+  int32 max_facts = 4;
+  string snapshot_id = 5;
+}
+
+message QueryResponse {
+  string answer = 1;
+  repeated Fact facts = 2;
+  QueryIntent intent = 3;
+  repeated string linked_entities = 4;
+  repeated string unresolved_entities = 5;
+  ResultStatus status = 6;
+  string snapshot_id = 7;
+}
+
+message GraphStatsRequest {}
+
+message GraphStatsResponse {
+  string snapshot_id = 1;
+  int32 papers = 2;
+  int32 entities = 3;
+  int32 relations = 4;
+  map<string, int32> entities_by_label = 5;
+  map<string, int32> relations_by_type = 6;
+}
+
+service GraphRagService {
+  rpc Query(QueryRequest) returns (QueryResponse);
+  rpc GetGraphStats(GraphStatsRequest) returns (GraphStatsResponse);
+}
