@@ -1,6 +1,5 @@
 import argparse
 import functools
-import json
 from pathlib import Path
 
 import anthropic

@@ -60,7 +60,7 @@ def main() -> None:
     print(f"\n  mean over {n} answerable questions:"
           f"  graph {sum(graph_scores)/n:.0%}   vector {sum(vector_scores)/n:.0%}")
 
-    print(f"\n\nNEGATIVES  (the correct answer is 'no connection' or 'not stated')\n")
+    print("\n\nNEGATIVES  (the correct answer is 'no connection' or 'not stated')\n")
     print(f"{'graph':>7} {'vector':>7}   question")
     for case in negatives:
         found_graph, facts = graph_papers(case)

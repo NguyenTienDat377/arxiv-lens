@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-
 from enum import StrEnum
+
 
 class EntityType(StrEnum):
     METHOD = "METHOD"

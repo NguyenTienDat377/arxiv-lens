@@ -176,21 +176,32 @@ arxiv-lens/
 │   │   ├── canonicalize.py          # name merging, type resolution, post-merge repair
 │   │   ├── drift_detector.py        # snapshot diff → promotion gate (exit 1)
 │   │   ├── build_graph.py           # Neo4j loader, idempotent MERGE + provenance
-│   │   └── consistency_checker.py   # Z3 encoding of the ontology's properties
+│   │   ├── consistency_checker.py   # Z3 encoding of the ontology's properties
+│   │   └── events.py                # publishes graph.updated to Kafka
+│   ├── tests/                       # repair, canonicalization, drift gate
 │   ├── data/raw/<snapshot-id>/      # immutable corpus snapshots (gitignored)
 │   ├── data/extracted/<snapshot-id>/# extraction results, keyed by (arxiv_id, version)
 │   ├── retrieval/
 │   │   ├── graph_rag.py             # plan → link → traverse → cited answer
-│   │   └── vector_rag.py            # conventional RAG baseline over abstracts
+│   │   ├── vector_rag.py            # conventional RAG baseline over abstracts
+│   │   └── grpc_server.py           # serves retrieval over the proto contract
 │   ├── eval/
 │   │   ├── golden.json              # questions with ground truth from the abstracts
 │   │   ├── run_eval.py              # scores retrieval, exits 1 below threshold
 │   │   └── compare.py               # graph vs vector on the same questions
 │   ├── requirements.txt
+│   ├── requirements-dev.txt
 │   └── Dockerfile
 ├── proto/graphrag.proto             # GraphRagService: Query, GetGraphStats
 ├── infra/docker-compose.yml         # Neo4j + Kafka (KRaft), named volumes
-├── query-service/                   # ⬜ Java Spring Boot service (hexagonal)
+├── query-service/                   # Java Spring Boot service (hexagonal)
+│   └── src/main/java/.../queryservice/
+│       ├── domain/                  # records + enums, no framework imports
+│       ├── application/             # GraphPort, QueryUseCase (@Cacheable)
+│       ├── adapter/in/web/          # REST controller, ProblemDetail handler
+│       ├── adapter/in/kafka/        # graph.updated listener → cache eviction
+│       └── adapter/out/grpc/        # the only class that imports protobuf
+├── .github/workflows/ci.yml         # lint + tests for both services
 ├── k8s/                             # ⬜ k3s manifests
 ├── docs/comment.md                  # design rationale notes
 ├── LICENSE
@@ -280,6 +291,38 @@ The outbound gRPC adapter can be swapped for an in-memory mock in tests without 
 
 ---
 
+## Tests and CI
+
+```
+graph-pipeline   ruff + 25 pytest cases   graph-pipeline/tests/
+query-service    31 JUnit cases           ./gradlew test
+```
+
+Both run on every push ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+
+The Python tests cover the three places where a silent mistake would corrupt
+the graph rather than crash the build: the repair rule's three-way lookup, name
+canonicalization, and the drift gate's two ratios. Several are regression tests
+for bugs that actually shipped — `CLIPS` being merged into `CLIP` by the plural
+rule, lost edges being divided by the number of changed papers instead of the
+shared edge count, and ontology violations being counted rather than rated so
+that simply extracting more papers looked like degradation.
+
+The Java tests need no Docker: the Kafka listener is exercised against an
+in-process broker (`@EmbeddedKafka`) and the gRPC adapter against a real
+in-process gRPC server, so enum mapping is verified by name rather than by
+ordinal.
+
+**What CI deliberately does not do.** The roadmap originally called for
+`ingest → extract → drift gate → build` on every push. It cannot: ingestion
+depends on the arXiv API, extraction costs money and is non-deterministic, the
+drift gate needs two snapshots that are not in the repository, and the builder
+needs a populated Neo4j. Running that per-push would make the pipeline's cost
+and the arXiv API's availability into gates on unrelated commits. It belongs on
+a schedule with secrets, which is the remaining roadmap item.
+
+---
+
 ## Roadmap
 
 **graph-pipeline**
@@ -298,6 +341,7 @@ The outbound gRPC adapter can be swapped for an in-memory mock in tests without 
 - [x] hybrid entity linking (exact match, then embedding fallback above a calibrated threshold)
 - [x] vector-RAG baseline and a graph-vs-vector comparison
 - [x] golden QA eval harness (positive and negative cases)
+- [x] unit tests for repair, canonicalization and the drift gate
 - [ ] embedding drift detection (evidently AI)
 - [ ] MLflow graph versioning
 - [x] Kafka producers (`graph.updated` published after a successful build)
@@ -312,7 +356,8 @@ The outbound gRPC adapter can be swapped for an in-memory mock in tests without 
 - [x] `infra/` — Docker Compose (Neo4j + Kafka, KRaft, named volumes)
 - [ ] `infra/` — Prometheus + Grafana dashboards
 - [ ] `k8s/` — k3s manifests
-- [ ] CI: run ingest → extract → drift gate → build on every push
+- [x] CI: lint and tests for both services on every push
+- [ ] CI: scheduled pipeline run (ingest → extract → drift gate → build) behind secrets
 
 ---
 

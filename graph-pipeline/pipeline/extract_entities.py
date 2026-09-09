@@ -7,6 +7,7 @@ import anthropic
 from anthropic.types import TextBlockParam
 from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
 from anthropic.types.messages.batch_create_params import Request
+from dotenv import load_dotenv
 
 from .models import ExtractionRecord, Paper, PaperExtraction, Relation
 from .ontology import RELATION_SPECS, EntityType, RelationType
@@ -16,7 +17,6 @@ from .snapshots import (
     load_snapshot,
     write_extractions,
 )
-from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -184,7 +184,13 @@ def repair(extraction: PaperExtraction) -> tuple[PaperExtraction, list[str]]:
         elif not candidates:
             log.append(f"dropped {edge}: no relation accepts {subject_type} -> {object_type}")
         else:
+            # Several predicates fit, so any rewrite would invent a claim the
+            # abstract never made. The edge survives for a human to look at.
             kept.append(relation)
+            log.append(
+                f"kept {edge}: {len(candidates)} predicates fit "
+                f"{subject_type} -> {object_type}"
+            )
 
     return extraction.model_copy(update={"relations": kept}), log
 

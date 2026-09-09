@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  graph-pipeline:
+    name: graph-pipeline (lint + tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: graph-pipeline
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: graph-pipeline/requirements-dev.txt
+
+      # The full dependency set, not a trimmed one: a CI that installs less
+      # than the project declares can pass while the project is uninstallable.
+      - run: pip install -r requirements-dev.txt
+
+      - run: ruff check pipeline retrieval eval tests
+
+      - run: pytest -q
+
+  query-service:
+    name: query-service (tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: query-service
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # The Kafka listener test runs an in-process broker and the gRPC adapter
+      # test an in-process server, so no service containers are needed.
+      - run: ./gradlew test --no-daemon

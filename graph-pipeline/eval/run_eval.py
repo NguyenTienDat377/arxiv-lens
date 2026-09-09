@@ -108,7 +108,10 @@ def main() -> None:
     for r in results:
         mark = "ok" if r.intent_correct else f"->{r.actual_intent}"
         flag = " " if r.passed else "!"
-        print(f"{flag}{mark:<7} {r.entity_recall:>5.0%} {r.paper_recall:>5.0%} {r.facts:>6}  {r.question}")
+        print(
+            f"{flag}{mark:<7} {r.entity_recall:>5.0%} {r.paper_recall:>5.0%} "
+            f"{r.facts:>6}  {r.question}"
+        )
         for missing in r.missing_entities:
             print(f"{'':22} missing entity {missing!r}")
         for missing in r.missing_papers:

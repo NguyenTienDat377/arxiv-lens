@@ -194,10 +194,14 @@ def ask(question: str, verbose: bool = False) -> str:
 
     if verbose:
         print(f"  intent    {query_plan.intent}")
-        for raw, resolved in zip(query_plan.entities, linked):
+        for raw, resolved in zip(query_plan.entities, linked, strict=True):
             print(f"  entity    {raw!r} -> {resolved!r}")
 
-    missing = [raw for raw, resolved in zip(query_plan.entities, linked) if resolved is None]
+    missing = [
+        raw
+        for raw, resolved in zip(query_plan.entities, linked, strict=True)
+        if resolved is None
+    ]
     if missing:
         return f"Not in the graph: {', '.join(repr(m) for m in missing)}"
 

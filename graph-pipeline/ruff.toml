@@ -1,0 +1,10 @@
+# Pinned explicitly: ruff's default rule set widens between releases, so
+# without this a version bump alone could turn CI red.
+line-length = 100
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[lint.per-file-ignores]
+# Fixture builders shadow nothing and are imported by name in the tests.
+"tests/*" = ["E501"]

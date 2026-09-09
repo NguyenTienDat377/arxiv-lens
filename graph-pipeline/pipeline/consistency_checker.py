@@ -10,7 +10,7 @@ from .ontology import RELATION_SPECS, EntityType, RelationType
 Edge = tuple[str, str]
 
 _TYPE_SORT, _TYPE_CONSTS = z3.EnumSort("EntityType", [str(t) for t in EntityType])
-_TYPE_BY_NAME = dict(zip((str(t) for t in EntityType), _TYPE_CONSTS))
+_TYPE_BY_NAME = dict(zip((str(t) for t in EntityType), _TYPE_CONSTS, strict=True))
 
 
 def load_graph(session) -> tuple[dict[str, EntityType], dict[RelationType, list[Edge]]]:

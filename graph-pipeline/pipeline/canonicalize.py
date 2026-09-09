@@ -7,7 +7,6 @@ from .models import Entity, ExtractionRecord, Relation
 from .ontology import RELATION_SPECS, EntityType
 from .snapshots import list_extracted, load_extractions
 
-
 TYPE_PRECEDENCE = [
     EntityType.DATASET,
     EntityType.MODEL,
@@ -175,7 +174,7 @@ def main() -> None:
     print(f"relations  {sum(len(r.extraction.relations) for r in records)} -> "
           f"{sum(len(r.extraction.relations) for r in merged)}")
 
-    print(f"\nmerged into a different surface form:")
+    print("\nmerged into a different surface form:")
     for variant, canonical in sorted(names.items()):
         if variant != canonical:
             print(f"  {variant!r} -> {canonical!r}")

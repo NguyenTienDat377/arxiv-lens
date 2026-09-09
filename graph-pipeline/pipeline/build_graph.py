@@ -7,10 +7,10 @@ from dotenv import load_dotenv
 from neo4j import Driver, GraphDatabase, Session
 
 from .canonicalize import canonicalize
+from .events import publish_graph_updated
 from .models import ExtractionRecord, Paper
 from .ontology import EntityType, RelationType
 from .snapshots import list_extracted, load_extractions, load_snapshot
-from .events import publish_graph_updated
 
 load_dotenv()
 
@@ -258,7 +258,8 @@ def main() -> None:
     # Announced only after the session closes, so the writes are committed
     # before a consumer is told to go and read them.
     publish_graph_updated(snapshot_id, counts)
-    print(f"\n{len(unresolved)} entity types resolved by precedence only")
+    print(f"\n{len(repairs)} relations repaired after merging")
+    print(f"{len(unresolved)} entity types resolved by precedence only")
 
 
 if __name__ == "__main__":
