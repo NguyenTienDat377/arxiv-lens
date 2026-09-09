@@ -193,7 +193,7 @@ arxiv-lens/
 │   │   └── compare.py               # graph vs vector on the same questions
 │   ├── requirements.txt
 │   ├── requirements-dev.txt
-│   └── Dockerfile
+│   └── Dockerfile                   # multi-stage; context is the repo root
 ├── proto/graphrag.proto             # GraphRagService: Query, GetGraphStats
 ├── infra/docker-compose.yml         # Neo4j + Kafka (KRaft), named volumes
 ├── query-service/                   # Java Spring Boot service (hexagonal)
@@ -203,6 +203,8 @@ arxiv-lens/
 │       ├── adapter/in/web/          # REST controller, ProblemDetail handler
 │       ├── adapter/in/kafka/        # graph.updated listener → cache eviction
 │       └── adapter/out/grpc/        # the only class that imports protobuf
+│   └── Dockerfile                   # gradle build stage → JRE runtime stage
+├── .dockerignore                    # root, because both builds share that context
 ├── .github/workflows/ci.yml         # lint + tests for both services
 ├── k8s/                             # ⬜ k3s manifests
 ├── docs/comment.md                  # design rationale notes
@@ -405,8 +407,6 @@ a schedule with secrets, which is the remaining roadmap item.
 
 ## Getting started
 
-> 🚧 Under active development. Only the Python pipeline runs today.
-
 **Prerequisites**
 
 - Docker
@@ -455,6 +455,33 @@ python -m grpc_tools.protoc -I ../proto \
 
 python -m retrieval.grpc_server --port 50051
 ```
+
+**Run the query service**
+
+```bash
+cd ../query-service
+./gradlew bootRun            # :8082, talks to the gRPC server above
+
+curl -s localhost:8082/actuator/health
+curl -s -X POST localhost:8082/api/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "What builds on Logic Tensor Networks?"}'
+curl -s localhost:8082/api/stats
+```
+
+**Or run the whole stack in containers**
+
+```bash
+cd infra
+docker compose --profile app up --build -d
+```
+
+Without `--profile app` compose starts Neo4j and Kafka only, which is the loop above:
+services on the host, infrastructure in Docker. With it, both services are built from
+the repository root — they share `proto/`, so neither can be built from its own
+directory — and every address switches from `localhost` to a service name
+(`neo4j:7687`, `kafka:9092`, `graph-pipeline:50051`). Each is an environment variable
+with a localhost default, so the same images serve both modes.
 
 Extraction is cached by `(arxiv_id, version)`, so re-running it only calls the API for
 papers that are new or revised. The Neo4j browser is at <http://localhost:7474>.

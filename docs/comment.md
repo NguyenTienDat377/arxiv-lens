@@ -718,6 +718,98 @@ scattered.
 
 ---
 
+## Containerization
+
+### The build context is the repository root, for both services
+
+Neither service can be built from its own directory, because both need `proto/`, which is a sibling of both:
+
+- `retrieval/grpc_server.py` imports from `generated/`, which is gitignored and produced by `grpc_tools.protoc` against `../proto`
+- `build.gradle` declares `sourceSets { main { proto { srcDir '../proto' } } }`
+
+Hence `build.context: ..` in compose, `COPY graph-pipeline/...` paths inside the Dockerfiles, and a single `.dockerignore` at the root. The Java builder also has to preserve the sibling layout — `/build/proto` beside `/build/query-service` — or Gradle's `../proto` resolves to nothing and it compiles zero proto sources without complaining.
+
+### `RUN` is build time, `CMD` is run time ⚠️
+
+The distinction the whole file rests on. `RUN` executes during `docker build` and its filesystem changes are frozen into a layer; `CMD` is not executed at build at all, only recorded as what to run when a container starts.
+
+`RUN python -m retrieval.grpc_server` would hang the build forever, waiting for a server to exit.
+
+Corollary: a `CMD` in a builder stage does nothing. The second `FROM` discards everything not explicitly copied forward.
+
+### Layer order is stable → volatile
+
+Docker reuses cached layers until one changes, then invalidates every layer after it. Dependencies change monthly, source changes constantly, so:
+
+```dockerfile
+COPY graph-pipeline/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt   # expensive, stays cached
+COPY graph-pipeline/pipeline ./pipeline              # cheap, changes often
+```
+
+Reversed, a one-character edit re-downloads torch. Same reason the Java builder copies the wrapper and `*.gradle` and runs `./gradlew dependencies` before it copies `src/`.
+
+`--no-cache-dir` on pip matters here too: without it every downloaded wheel stays under `~/.cache/pip`, and torch's alone is ~800 MB of dead weight in the layer.
+
+### Why not alpine
+
+The original Dockerfile was `python:3.11-alpine`. Alpine uses musl libc, and PyPI wheels for torch are built against glibc, so pip falls back to building from source — an hour, if it succeeds. `python:3.11-slim` is Debian-based and every wheel in `requirements.txt` installs prebuilt.
+
+### `COPY . .` bakes secrets into a layer ⚠️
+
+The original also copied everything, including `graph-pipeline/.env` and its `ANTHROPIC_API_KEY`. Deleting a file in a later layer does not remove it — the earlier layer still holds it and `docker history` still shows it.
+
+The root `.dockerignore` excludes `**/.env`, `data/`, `.venv`, `build/` and `.gradle`. Worth verifying rather than trusting, because a mistyped pattern fails open:
+
+```bash
+docker run --rm <image> sh -c 'find / -name ".env" 2>/dev/null'
+docker history --no-trunc <image> | grep -c ANTHROPIC
+```
+
+### The embedding model is baked in
+
+The builder runs a download of `all-MiniLM-L6-v2` with `HF_HOME=/opt/hf`, and the runtime stage copies that directory. Without it, the first `link()` call in a fresh container reaches huggingface.co — a cold-start dependency on the public internet that only shows up under a network policy or an outage. `HF_HUB_OFFLINE=1` in compose makes any accidental fetch fail loudly instead of hanging.
+
+`HF_HOME` has to be set in **both** stages: in the builder so the download lands somewhere known, in the runtime so the library looks in the same place. Set in only one, it silently re-downloads.
+
+### Why torch stays in the runtime image
+
+`_nearest()` catches `ImportError` and returns `None`, so an image without `sentence-transformers` still runs — entity linking just degrades to exact-match-only, and questions like "neural nets" stop resolving. Graceful degradation is a good property; shipping it as the default is not. The cost is an image around 2.5 GB, which is what an ML service costs.
+
+### `-x test` in the Java image build
+
+CI already runs all 31 tests. Running them inside `docker build` would put an embedded Kafka broker on the critical path of every image build, and a build machine without a Docker socket could not do it anyway. Tests gate the commit; the image build packages what the commit already proved.
+
+`--no-daemon` because Gradle's background daemon has nothing to speed up in a container that exits after one build, and can leave the build waiting on it.
+
+### `EXPOSE` publishes nothing
+
+It is documentation plus a hint for `docker run -P`. The `ports:` mapping in compose is what actually opens a port.
+
+### Addresses change meaning inside a container
+
+Inside a container `localhost` is the container. Every address is an environment variable with a localhost default, so one image serves both modes:
+
+| | host process | container |
+|---|---|---|
+| Neo4j | `bolt://localhost:7687` | `bolt://neo4j:7687` |
+| Kafka | `localhost:9094` | `kafka:9092` |
+| gRPC | `localhost:50051` | `graph-pipeline:50051` |
+
+The Kafka split was already handled by `KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9094` — a client is told the address for the listener it connected on.
+
+### `environment` overrides `env_file` ⚠️
+
+`graph-pipeline` loads `../graph-pipeline/.env` for `ANTHROPIC_API_KEY`, and that file also contains `NEO4J_URL=bolt://localhost:7687`, which is wrong inside a container. Compose resolves `environment:` after `env_file:`, so the explicit `NEO4J_URL: bolt://neo4j:7687` wins. Relying on that precedence is deliberate but subtle — it is the kind of thing to state rather than discover.
+
+Only `graph-pipeline` gets the env file. Putting it on `neo4j` or `kafka` would inject the Anthropic key into containers that have no use for it.
+
+### Profiles keep the existing dev loop
+
+Both application services carry `profiles: [app]`, so `docker compose up` still starts infrastructure only and running the services on the host is unchanged. `docker compose --profile app up --build` runs everything containerised. Two modes, one file, no second compose file to drift.
+
+---
+
 ## Infrastructure gotchas
 
 - **Neo4j has two ports.** 7474 is the HTTP browser; **7687 is Bolt**, which drivers speak. `bolt://localhost:7687`, not the URL you log into.

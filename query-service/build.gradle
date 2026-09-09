@@ -37,6 +37,12 @@ dependencies {
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// bootJar produces the executable jar; the plain library jar is never consumed
+// and its presence makes build/libs ambiguous to a COPY glob in the Dockerfile.
+tasks.named('jar') {
+	enabled = false
+}
+
 tasks.named('test') {
 	useJUnitPlatform()
 }

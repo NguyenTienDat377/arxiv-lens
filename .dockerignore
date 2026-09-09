@@ -1,0 +1,30 @@
+# The build context is the repository root, because both services need proto/.
+# Everything here either cannot go in an image or must not.
+
+**/.env
+**/.env.*
+!**/.env.example
+
+.git
+.github
+docs
+k8s
+README.md
+LICENSE
+
+# Corpus snapshots, extractions, embeddings and drift reports: hundreds of MB
+# that belong on a volume, not in a layer.
+graph-pipeline/data
+graph-pipeline/.venv
+graph-pipeline/generated
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+
+query-service/build
+query-service/.gradle
+**/bin
+**/.idea
+**/.vscode
+**/*.iml

@@ -55,6 +55,70 @@ services:
       retries: 12
       start_period: 20s
 
+  # Both application services sit behind a profile, so `docker compose up` still
+  # starts infrastructure only and the host dev loop is unchanged. The full
+  # containerised stack is `docker compose --profile app up --build`.
+  graph-pipeline:
+    build:
+      # The repo root, because the build needs proto/ as well as the service.
+      context: ..
+      dockerfile: graph-pipeline/Dockerfile
+    container_name: graph-pipeline
+    profiles: [app]
+    restart: unless-stopped
+    ports:
+      - "50051:50051"
+    # Supplies ANTHROPIC_API_KEY, which the answer step needs. Only this service
+    # gets it: neo4j and kafka have no use for the key.
+    env_file:
+      - ../graph-pipeline/.env
+    environment:
+      # `environment` wins over `env_file`, which matters here — the .env file
+      # says localhost, and inside a container localhost is the container.
+      NEO4J_URL: bolt://neo4j:7687
+      KAFKA_BOOTSTRAP: kafka:9092
+      HF_HUB_OFFLINE: "1"   # the model is baked in; never reach the hub at runtime
+    volumes:
+      # Snapshots, extractions and embeddings belong on the host, not in a layer.
+      - ../graph-pipeline/data:/app/data
+    depends_on:
+      neo4j:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket; socket.create_connection(('localhost', 50051), 2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  query-service:
+    build:
+      context: ..
+      dockerfile: query-service/Dockerfile
+    container_name: query-service
+    profiles: [app]
+    restart: unless-stopped
+    ports:
+      - "8082:8082"
+    environment:
+      GRPC_TARGET: static://graph-pipeline:50051
+      KAFKA_BOOTSTRAP: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+      graph-pipeline:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL",
+             "curl -sf http://localhost:8082/actuator/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
 volumes:
   neo4j_data:
     # Pinned to the volume the hand-run container already used, so switching to
