@@ -26,7 +26,12 @@ jobs:
           cache: pip
           cache-dependency-path: graph-pipeline/requirements-dev.txt
 
-      # The full dependency set, not a trimmed one: a CI that installs less
+      # CPU torch first, from its own index, exactly as graph-pipeline/Dockerfile
+      # does it. The default PyPI wheel for Linux pulls the CUDA runtime — some
+      # 3 GB of GPU libraries that no runner and no image here can use.
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      # Then the full dependency set, not a trimmed one: a CI that installs less
       # than the project declares can pass while the project is uninstallable.
       - run: pip install -r requirements-dev.txt
 

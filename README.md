@@ -150,15 +150,18 @@ This table is not documentation. It is used four times:
 | Corpus source                 | arXiv API                              | ✅ |
 | Experiment / graph versioning | MLflow                                 | ⬜ |
 | Embeddings (baseline + linking) | sentence-transformers (MiniLM)       | ✅ |
-| Embedding drift detection     | evidently AI                           | ⬜ |
-| Message broker                | Apache Kafka (broker up, no producer)  | ◐ |
-| API framework                 | Spring Boot 3 (Java 21)                | ⬜ |
-| Build tool                    | Gradle                                 | ⬜ |
+| Embedding drift detection     | Evidently (permutation null)            | ✅ |
+| Message broker                | Apache Kafka (KRaft), producer + consumer | ✅ |
+| API framework                 | Spring Boot 4 (Java 21)                | ✅ |
+| Build tool                    | Gradle                                 | ✅ |
 | Observability                 | Prometheus + Grafana                   | ⬜ |
+| Service contract              | gRPC + protobuf                        | ✅ |
+| Container images              | Docker, multi-stage, non-root          | ✅ |
+| CI                            | GitHub Actions (lint + tests)          | ✅ |
 | Container orchestration (dev) | Docker Compose                         | ✅ |
-| Container orchestration (prod-like) | k3s                              | ⬜ |
+| Container orchestration (prod-like) | Kubernetes (minikube locally)    | ✅ |
 
-Drift detection is currently **structural** — a diff of the extracted graph between snapshots, used as a promotion gate. Distributional (embedding) drift is a separate, planned addition; the two measure different things and are not alternatives.
+Drift detection is of two kinds, measuring different things and gating differently: **structural** drift is a diff of the extracted graph between snapshots and exits non-zero, **semantic** drift compares abstract embeddings and reports. See [Two kinds of drift](#two-kinds-of-drift).
 
 ---
 
@@ -206,7 +209,14 @@ arxiv-lens/
 │   └── Dockerfile                   # gradle build stage → JRE runtime stage
 ├── .dockerignore                    # root, because both builds share that context
 ├── .github/workflows/ci.yml         # lint + tests for both services
-├── k8s/                             # ⬜ k3s manifests
+├── k8s/                             # Kubernetes manifests
+│   ├── 00-namespace.yml
+│   ├── 01-secrets.example.yml       # template; the real Secret is gitignored
+│   ├── 02-neo4j.yml                 # StatefulSet + PVC + headless Service
+│   ├── 03-kafka.yml                 # StatefulSet + PVC + headless Service
+│   ├── 04-graph-pipeline.yml        # PVC + Deployment + ClusterIP Service
+│   ├── 05-query-service.yml         # Deployment + NodePort Service
+│   └── 06-build-graph-job.yml       # one-shot Job: snapshots → Neo4j
 ├── docs/comment.md                  # design rationale notes
 ├── LICENSE
 └── README.md
@@ -399,7 +409,7 @@ a schedule with secrets, which is the remaining roadmap item.
 - [x] `query-service` — Kafka consumer + cache invalidation
 - [x] `infra/` — Docker Compose (Neo4j + Kafka, KRaft, named volumes)
 - [ ] `infra/` — Prometheus + Grafana dashboards
-- [ ] `k8s/` — k3s manifests
+- [x] `k8s/` — Kubernetes manifests (StatefulSets, PVCs, Secret, Job, NodePort)
 - [x] CI: lint and tests for both services on every push
 - [ ] CI: scheduled pipeline run (ingest → extract → drift gate → build) behind secrets
 
@@ -482,6 +492,48 @@ the repository root — they share `proto/`, so neither can be built from its ow
 directory — and every address switches from `localhost` to a service name
 (`neo4j:7687`, `kafka:9092`, `graph-pipeline:50051`). Each is an environment variable
 with a localhost default, so the same images serve both modes.
+
+**Or run it on Kubernetes**
+
+```bash
+minikube start --cpus 4 --memory 6g --disk-size 40g
+kubectl apply -f k8s/00-namespace.yml
+kubectl config set-context --current --namespace=arxiv-lens
+
+# Images are built locally, so they have to be loaded into the cluster's own
+# image store — a cluster cannot see your Docker daemon.
+minikube image load arxiv-lens-graph-pipeline:latest
+minikube image load arxiv-lens-query-service:latest
+
+# The Secret is created from .env, never committed. See 01-secrets.example.yml.
+PW=$(grep NEO4J_PASSWORD graph-pipeline/.env | cut -d= -f2)
+kubectl create secret generic arxiv-lens-secrets \
+  --from-literal=ANTHROPIC_API_KEY="$(grep ANTHROPIC_API_KEY graph-pipeline/.env | cut -d= -f2)" \
+  --from-literal=NEO4J_PASSWORD="$PW" \
+  --from-literal=NEO4J_AUTH="neo4j/$PW"
+
+kubectl apply -f k8s/
+```
+
+The cluster's volumes start empty, unlike the bind mount compose uses, so the
+snapshots are copied in once and the graph is built by a Job:
+
+```bash
+POD=$(kubectl get pod -l app=graph-pipeline -o jsonpath='{.items[0].metadata.name}')
+kubectl cp graph-pipeline/data/raw       $POD:/app/data/raw
+kubectl cp graph-pipeline/data/extracted $POD:/app/data/extracted
+
+kubectl apply -f k8s/06-build-graph-job.yml
+kubectl logs -f job/build-graph        # +300 papers, +1742 entities, +1244 relations
+
+kubectl port-forward svc/query-service 8083:8082
+curl -s localhost:8083/api/stats
+```
+
+Every address is unchanged from Docker Compose — `bolt://neo4j:7687`,
+`kafka:9092`, `static://graph-pipeline:50051` — because a Kubernetes Service
+provides the same name-based discovery the compose network did. That only works
+because each one is an environment variable rather than a literal in the code.
 
 Extraction is cached by `(arxiv_id, version)`, so re-running it only calls the API for
 papers that are new or revised. The Neo4j browser is at <http://localhost:7474>.

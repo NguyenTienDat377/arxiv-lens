@@ -1,0 +1,16 @@
+apiVersion: 1
+
+# `providers`, plural. The singular key parses as valid YAML and is then ignored,
+# so Grafana starts cleanly and provisions nothing.
+providers:
+  - name: arxiv-lens
+    type: file
+    folder: arxiv-lens
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      # A directory of dashboard JSON only. Pointing this at the provisioning
+      # directory itself would have Grafana try to parse these YAML files as
+      # dashboards.
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

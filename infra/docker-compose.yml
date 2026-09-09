@@ -119,10 +119,41 @@ services:
       retries: 12
       start_period: 30s
 
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: prometheus
+    profiles: [observability]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: grafana
+    profiles: [observability]
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      # Dashboard JSON lives apart from the provider YAML, so Grafana is
+      # never asked to parse a config file as a dashboard.
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
 volumes:
   neo4j_data:
-    # Pinned to the volume the hand-run container already used, so switching to
-    # compose keeps the existing graph instead of starting from empty.
     name: arxiv_lens_neo4j_data
   kafka_data:
     name: arxiv_lens_kafka_data
+  prometheus_data:
+    name: arxiv_lens_prometheus_data
+  grafana_data:
+    name: arxiv_lens_grafana_data
+

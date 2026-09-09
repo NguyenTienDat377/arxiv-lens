@@ -1,0 +1,13 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    # Fixed, so the committed dashboard JSON can reference it. Left unset,
+    # Grafana generates a random uid and every panel says "datasource not found".
+    uid: prometheus
+    access: proxy
+    # A service name on the compose network, not localhost: Grafana is a
+    # container reaching another container.
+    url: http://prometheus:9090
+    isDefault: true

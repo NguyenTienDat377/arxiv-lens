@@ -810,6 +810,109 @@ Both application services carry `profiles: [app]`, so `docker compose up` still 
 
 ---
 
+## `k8s/` — Kubernetes
+
+### Six objects replace what compose did implicitly
+
+| | compose equivalent |
+|---|---|
+| Deployment | `restart: unless-stopped` for a stateless container |
+| StatefulSet | the same, plus stable identity and its own disk |
+| Service | the compose network's name resolution |
+| PersistentVolumeClaim | a named volume |
+| Secret | `env_file` |
+| Job | `docker compose run --rm` |
+
+The YAML is long because Kubernetes makes explicit what compose supplied by convention. Nothing here is a seventh idea.
+
+### None of the addresses changed
+
+```yaml
+NEO4J_URL: bolt://neo4j:7687
+KAFKA_BOOTSTRAP: kafka:9092
+GRPC_TARGET: static://graph-pipeline:50051
+```
+
+Byte-identical to the compose file, because a Service named `neo4j` in this namespace resolves as `neo4j`. The port was making every address an environment variable with a localhost default; had they stayed literals in the code, moving to Kubernetes would have meant rebuilding both images.
+
+### `imagePullPolicy: IfNotPresent` ⚠️
+
+Kubernetes special-cases the `latest` tag and defaults its pull policy to `Always`. An image loaded into the node with `minikube image load` is therefore still fetched from Docker Hub, and fails with `ImagePullBackOff` on an image that is sitting right there. Loading the image and setting the policy are two separate requirements, and only doing one produces a confusing error.
+
+More generally: a cluster has its own image store. It cannot see the Docker daemon that built the image. Locally that means `minikube image load`; in production it means a registry push.
+
+### `fsGroup` on every pod with a volume ⚠️
+
+A freshly provisioned PersistentVolume is owned by root. The Neo4j image runs as uid 7474 and both project images as uid 1000, so without
+
+```yaml
+securityContext:
+  fsGroup: 7474
+```
+
+the database cannot write to its own data directory and the pod crash-loops with a permissions error at startup. `fsGroup` makes the kubelet chown the volume to that group on mount.
+
+This is the cost of the non-root user in the Dockerfiles — worth paying, but it has to be paid in both places.
+
+### StatefulSet vs Deployment, decided by a concrete requirement
+
+Neo4j needs its data to survive a pod restart, which a `volumeClaimTemplate` gives it: one PVC per pod, bound by name.
+
+Kafka has a second, sharper reason. KRaft's controller quorum is configured as
+
+```yaml
+KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-0.kafka.arxiv-lens.svc.cluster.local:9093
+```
+
+A voter has to be addressable as a *specific node*, not as a load-balanced Service. Only a StatefulSet plus a headless Service produces the stable per-pod DNS name `kafka-0.kafka` that this requires. That is the difference between the two controllers made concrete: Deployments treat pods as interchangeable, StatefulSets do not.
+
+### One Kafka listener here, two in compose
+
+Compose needed INTERNAL and EXTERNAL listeners because processes on the host connected as `localhost:9094` while containers used `kafka:9092`. In the cluster every client is a pod, so the EXTERNAL listener has nothing to serve and is dropped.
+
+### `publishNotReadyAddresses: true` ⚠️
+
+query-service crash-looped three times on first deploy:
+
+```
+ConfigException: No resolvable bootstrap urls given in bootstrap.servers
+```
+
+**Unresolvable**, not refused — and the distinction is the whole bug. A Kafka client retries a refused connection indefinitely, but treats a bootstrap address that does not resolve as fatal and exits. A headless Service publishes DNS only for pods that are *ready*, so while Kafka was still pulling its image the name `kafka` did not exist at all.
+
+`publishNotReadyAddresses: true` publishes the record as soon as the pod has an IP, which converts the fatal error into a retryable one.
+
+Underneath this is a design fact worth internalising: **Kubernetes has no `depends_on`.** The assumption is that every service tolerates its dependencies being absent and retries. The pods did self-heal, which is the system working as intended — but "eventually converges after three crashes" and "starts cleanly" are different quality bars, and only one of them is quiet in a log.
+
+### Readiness and liveness answer different questions
+
+- **readiness** — can this pod take traffic? Failing removes it from the Service's endpoints.
+- **liveness** — is this pod still alive? Failing kills the container.
+
+Same probe, opposite consequences. Liveness is deliberately later and slower (`initialDelaySeconds: 90` against readiness's 20), because a tight liveness probe on a slow-starting JVM restarts it before it can finish booting — a restart loop that looks exactly like a crash but is the probe causing it.
+
+query-service uses Spring Boot's `/actuator/health/readiness` and `/liveness`, which exist for precisely this split.
+
+### A Job, not a Deployment, for the graph build
+
+`build_graph` runs to completion and stops. A Deployment would restart it forever, since that is what a Deployment is for. A Job runs it to success and stops, with `backoffLimit` bounding the retries.
+
+It also demonstrated something the compose run could not: against an empty Neo4j the counters were `+300 papers, +1742 entities, +1244 relations` rather than the `+0` an already-populated database returns. The idempotency claim and the correctness claim need different starting states to be visible.
+
+A completed Job is immutable — delete it before re-applying.
+
+### The data volume starts empty
+
+Compose bind-mounted `../graph-pipeline/data`. A cluster has no host to bind to, so the PVC starts empty and the snapshots are copied in once with `kubectl cp`. This is the correct shape — images hold code, volumes hold data — but it is a real step that compose hid, and it is why the Job exists at all.
+
+`serve()` reads nothing at startup, only per request, so the Deployment starts happily before the volume has any content. That was luck rather than design, and it is worth keeping true.
+
+### The Secret is created, never committed
+
+A Secret manifest stores base64, which is encoding and not encryption. `01-secrets.example.yml` is a template with placeholder values; the real one is created imperatively from `.env` and the filename pattern is gitignored. Same rule as `.env` itself, and the same rule the `.dockerignore` enforces for images.
+
+---
+
 ## Infrastructure gotchas
 
 - **Neo4j has two ports.** 7474 is the HTTP browser; **7687 is Bolt**, which drivers speak. `bolt://localhost:7687`, not the URL you log into.
@@ -827,7 +930,6 @@ What remains is operational rather than architectural:
 
 - **MLflow graph versioning** — the snapshots and the reuse cache already make a build reproducible; MLflow would make the *comparison between builds* browsable.
 - **Prometheus + Grafana** — the actuator endpoint is exposed and micrometer is on the classpath; nothing scrapes it yet.
-- **k8s manifests**, which need real Dockerfiles first. The existing `graph-pipeline/Dockerfile` is broken: it installs `requirement.txt`, runs a `main.py` that does not exist, `COPY . .` would bake `.env` into a layer, and Alpine has no musl wheels for torch.
 - **A scheduled pipeline run** behind secrets — the one thing per-push CI deliberately cannot do, since ingestion depends on arXiv and extraction costs money.
 
 The standing gap is unchanged and worth restating: every gate here measures *stability*, and only the golden eval measures *correctness*. A consistently wrong graph still passes the drift gate, the Z3 checker and the embedding monitor. The eval is 18 questions; that is the number to grow.

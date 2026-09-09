@@ -651,3 +651,13 @@ dist/
 # protoc output, regenerate with the command in the README
 graph-pipeline/generated/
 
+
+# The real k8s Secret — 01-secrets.example.yml is the committed template.
+k8s/01-secrets.yml
+k8s/*-secrets.yml
+!k8s/*-secrets.example.yml
+
+# MLflow local tracking store
+graph-pipeline/mlflow.db
+graph-pipeline/mlartifacts/
+graph-pipeline/mlruns/
