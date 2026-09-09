@@ -11,6 +11,7 @@ from .events import publish_graph_updated
 from .models import ExtractionRecord, Paper
 from .ontology import EntityType, RelationType
 from .snapshots import list_extracted, load_extractions, load_snapshot
+from .tracking import log_build
 
 load_dotenv()
 
@@ -258,6 +259,11 @@ def main() -> None:
     # Announced only after the session closes, so the writes are committed
     # before a consumer is told to go and read them.
     publish_graph_updated(snapshot_id, counts)
+
+    run_id = log_build(snapshot_id, counts, merged, unresolved, repairs)
+    if run_id:
+        print(f"  mlflow: logged run {run_id}")
+
     print(f"\n{len(repairs)} relations repaired after merging")
     print(f"{len(unresolved)} entity types resolved by precedence only")
 
