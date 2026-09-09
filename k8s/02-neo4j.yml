@@ -1,0 +1,99 @@
+# A headless Service (clusterIP: None) rather than a normal one. A StatefulSet
+# requires it: it is what gives each pod a stable DNS name, neo4j-0.neo4j. Inside
+# the namespace, plain `neo4j:7687` also resolves, so the address the Python
+# driver already uses needs no change.
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j
+  namespace: arxiv-lens
+spec:
+  clusterIP: None
+  # Publish DNS for the pod before it is ready. Callers then get a connection
+  # error they can retry rather than an unresolvable hostname, which several
+  # clients treat as fatal.
+  publishNotReadyAddresses: true
+  selector:
+    app: neo4j
+  ports:
+    - name: bolt
+      port: 7687
+      targetPort: 7687
+    - name: http
+      port: 7474
+      targetPort: 7474
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: neo4j
+  namespace: arxiv-lens
+spec:
+  serviceName: neo4j
+  replicas: 1
+  selector:
+    matchLabels:
+      app: neo4j
+  template:
+    metadata:
+      labels:
+        app: neo4j
+    spec:
+      securityContext:
+        # The image runs as uid 7474. A freshly provisioned volume is owned by
+        # root, so without fsGroup the database cannot write to its own data
+        # directory and the pod crash-loops on startup.
+        fsGroup: 7474
+      containers:
+        - name: neo4j
+          image: neo4j:5
+          ports:
+            - containerPort: 7687
+              name: bolt
+            - containerPort: 7474
+              name: http
+          env:
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: arxiv-lens-secrets
+                  key: NEO4J_AUTH
+            # Half the heap compose uses: four workloads share 6 GB here.
+            - name: NEO4J_server_memory_heap_max__size
+              value: 512m
+            - name: NEO4J_server_memory_pagecache_size
+              value: 256m
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            # Gates whether the Service sends traffic here.
+            tcpSocket:
+              port: 7687
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            # Gates whether the kubelet kills the container. Deliberately later
+            # and slower than readiness: a tight liveness probe on a slow starter
+            # produces a restart loop that looks like a crash.
+            tcpSocket:
+              port: 7687
+            initialDelaySeconds: 90
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: 768Mi
+              cpu: 250m
+            limits:
+              memory: 1536Mi
+              cpu: "1"
+  volumeClaimTemplates:
+    # The StatefulSet equivalent of a named Docker volume: one PersistentVolume
+    # per pod, bound by name, surviving pod restarts and rescheduling.
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi

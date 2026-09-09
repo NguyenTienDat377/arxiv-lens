@@ -1,0 +1,102 @@
+# Snapshots and extractions are data, not code, so they are excluded from the
+# image by .dockerignore and live on a volume instead. Unlike compose, which
+# bind-mounted the host directory, a cluster volume starts empty — it is filled
+# once with `kubectl cp` (see the README) and then outlives every pod.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: graph-data
+  namespace: arxiv-lens
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: graph-pipeline
+  namespace: arxiv-lens
+spec:
+  # A normal ClusterIP: this one is stateless and load-balanced across whatever
+  # pods match the selector, which is exactly what a Service is for.
+  selector:
+    app: graph-pipeline
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graph-pipeline
+  namespace: arxiv-lens
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: graph-pipeline
+  template:
+    metadata:
+      labels:
+        app: graph-pipeline
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: graph-pipeline
+          image: arxiv-lens-graph-pipeline:latest
+          # Kubernetes defaults the `latest` tag to imagePullPolicy: Always, so
+          # without this it ignores the image loaded into the node and tries to
+          # pull from Docker Hub — ImagePullBackOff on an image that is present.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50051
+              name: grpc
+          env:
+            # Unchanged from compose. Service DNS means `neo4j` and `kafka`
+            # resolve here exactly as they did on the compose network.
+            - name: NEO4J_URL
+              value: bolt://neo4j:7687
+            - name: NEO4J_USERNAME
+              value: neo4j
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: arxiv-lens-secrets
+                  key: NEO4J_PASSWORD
+            - name: KAFKA_BOOTSTRAP
+              value: kafka:9092
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arxiv-lens-secrets
+                  key: ANTHROPIC_API_KEY
+            - name: HF_HUB_OFFLINE
+              value: "1"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          readinessProbe:
+            tcpSocket:
+              port: 50051
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 50051
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: 768Mi
+              cpu: 250m
+            limits:
+              memory: 1536Mi
+              cpu: "1"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: graph-data

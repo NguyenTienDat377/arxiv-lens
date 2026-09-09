@@ -1,0 +1,55 @@
+# Neo4j's volume starts empty in the cluster, so the graph has to be built once
+# from the snapshots on the data volume. This is work that runs to completion and
+# stops, which is a Job — not a Deployment, whose whole purpose is to restart
+# anything that exits.
+#
+#   kubectl apply -f k8s/06-build-graph-job.yml
+#   kubectl logs -f job/build-graph
+#
+# Re-runnable: every write is a MERGE, so a second run reports +0 and changes
+# nothing. Delete the Job before re-applying it — a completed Job is immutable.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: build-graph
+  namespace: arxiv-lens
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: build-graph
+          image: arxiv-lens-graph-pipeline:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-m", "pipeline.build_graph"]
+          env:
+            - name: NEO4J_URL
+              value: bolt://neo4j:7687
+            - name: NEO4J_USERNAME
+              value: neo4j
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: arxiv-lens-secrets
+                  key: NEO4J_PASSWORD
+            - name: KAFKA_BOOTSTRAP
+              value: kafka:9092
+            - name: HF_HUB_OFFLINE
+              value: "1"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 250m
+            limits:
+              memory: 1536Mi
+              cpu: "1"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: graph-data

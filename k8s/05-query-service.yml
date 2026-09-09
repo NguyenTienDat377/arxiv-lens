@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: query-service
+  namespace: arxiv-lens
+spec:
+  # NodePort so the API is reachable from outside the cluster. In a real cluster
+  # this would be an Ingress or a LoadBalancer; NodePort is the honest local
+  # equivalent and needs nothing installed.
+  type: NodePort
+  selector:
+    app: query-service
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+      nodePort: 30082
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: query-service
+  namespace: arxiv-lens
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: query-service
+  template:
+    metadata:
+      labels:
+        app: query-service
+    spec:
+      containers:
+        - name: query-service
+          image: arxiv-lens-query-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+              name: http
+          env:
+            - name: GRPC_TARGET
+              value: static://graph-pipeline:50051
+            - name: KAFKA_BOOTSTRAP
+              value: kafka:9092
+          readinessProbe:
+            # Spring Boot's actuator splits these for exactly this purpose:
+            # readiness reports whether the app can serve, liveness whether it
+            # is still alive at all.
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8082
+            initialDelaySeconds: 20
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8082
+            initialDelaySeconds: 90
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 1Gi
+              cpu: "1"
