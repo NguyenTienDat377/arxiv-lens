@@ -8,3 +8,5 @@ sentence-transformers>=3.0.0
 grpcio>=1.60.0
 grpcio-tools>=1.60.0
 confluent-kafka>=2.0.0
+evidently>=0.7.0
+

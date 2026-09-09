@@ -117,10 +117,10 @@ def _name_index() -> dict[str, str]:
 
 @functools.cache
 def _entity_vectors():
-    from retrieval.vector_rag import _model
+    from pipeline.embeddings import model
 
     names = sorted(set(_name_index().values()))
-    return names, _model().encode(names, normalize_embeddings=True,
+    return names, model().encode(names, normalize_embeddings=True,
                                   show_progress_bar=False)
 
 
@@ -128,12 +128,12 @@ def _nearest(text: str) -> str | None:
     try:
         import numpy as np
 
-        from retrieval.vector_rag import _model
+        from pipeline.embeddings import model
     except ImportError:
         return None
 
     names, vectors = _entity_vectors()
-    scores = vectors @ _model().encode([text], normalize_embeddings=True)[0]
+    scores = vectors @ model().encode([text], normalize_embeddings=True)[0]
     best = int(np.argmax(scores))
     return names[best] if scores[best] >= LINK_THRESHOLD else None
 

@@ -177,7 +177,9 @@ arxiv-lens/
 │   │   ├── drift_detector.py        # snapshot diff → promotion gate (exit 1)
 │   │   ├── build_graph.py           # Neo4j loader, idempotent MERGE + provenance
 │   │   ├── consistency_checker.py   # Z3 encoding of the ontology's properties
-│   │   └── events.py                # publishes graph.updated to Kafka
+│   │   ├── events.py                # publishes graph.updated to Kafka
+│   │   ├── embeddings.py            # shared MiniLM cache for baseline, linking, drift
+│   │   └── embedding_drift.py       # semantic drift between two sets of abstracts
 │   ├── tests/                       # repair, canonicalization, drift gate
 │   ├── data/raw/<snapshot-id>/      # immutable corpus snapshots (gitignored)
 │   ├── data/extracted/<snapshot-id>/# extraction results, keyed by (arxiv_id, version)
@@ -238,7 +240,7 @@ Type resolution is a cascade: the ontology's domain/range constraints vote first
 
 ### Why is the drift detector a gate rather than a dashboard?
 
-It exits non-zero, so `drift_detector && build_graph` refuses to load a bad snapshot. Churn is measured only on papers present in *both* snapshots at the same version — those are served from cache and cannot legitimately change, so any difference means something upstream moved (an edited prompt, a changed ontology). New and removed papers are explained by corpus growth and excluded from the measurement.
+It exits non-zero, so `drift_detector && build_graph` refuses to load a bad snapshot. Churn is measured only on papers present in *both* snapshots at the same version — those are served from cache and cannot legitimately change, so any difference means something upstream moved (an edited prompt, a changed ontology). New and removed papers are explained by corpus growth and excluded from the measurement. The semantic counterpart deliberately does not gate — see [Two kinds of drift](#two-kinds-of-drift).
 
 ### Why Z3 for consistency checking?
 
@@ -288,6 +290,46 @@ The boundary is a genuine language mismatch. The pipeline is Python because the 
 ### Why hexagonal architecture in the Spring Boot service?
 
 The outbound gRPC adapter can be swapped for an in-memory mock in tests without touching the domain or application layer. Textbook-motivated, not architecture for its own sake.
+
+---
+
+## Two kinds of drift
+
+`drift_detector.py` asks a structural question: given the same papers at the
+same versions, did extraction produce a different graph? That is a promotion
+gate and it exits 1, because the only honest cause is the extractor changing
+under you.
+
+`embedding_drift.py` asks a semantic one: are the papers themselves still about
+the same things? It reports rather than gates. A corpus that moves into new
+topics is the normal life of a research field, not a defect — but it does
+invalidate things calibrated on the old distribution, specifically entity
+linking's 0.80 threshold and the golden eval's ground truth. `--fail-on-drift`
+exists for a caller that wants it to gate.
+
+Two signals have to be read together:
+
+```
+classifier AUC   0.482 (> 0.6 means separable)
+centroid cosine  0.0084
+```
+
+The domain classifier tries to tell reference papers from current ones; 0.5 is
+"indistinguishable" and anything it can learn is drift in some direction. The
+centroid distance only catches a shift in the mean. Split the corpus at its
+median publication date and neither fires. Split it into papers that do and do
+not mention vision, and both do (AUC 0.86), which is how the detector was
+verified — "no drift found" is indistinguishable from a broken detector until
+you make it find something.
+
+**Why the centroid null is hand-rolled.** Evidently bootstraps this threshold by
+resampling both halves from the reference set with replacement, so the two
+samples overlap and their centroids sit closer than two independent sets would,
+and it estimates a 95th percentile from 100 draws. Over 40 pairs drawn from an
+identical distribution it reported drift 22 times, while detecting a real shift
+in only 9 of 20. A permutation test — pool both sides, shuffle, split, repeat —
+scored 3/40 and 20/20 on the same data. Evidently still runs the classifier and
+renders the HTML report; the centroid null is computed here.
 
 ---
 
@@ -342,7 +384,7 @@ a schedule with secrets, which is the remaining roadmap item.
 - [x] vector-RAG baseline and a graph-vs-vector comparison
 - [x] golden QA eval harness (positive and negative cases)
 - [x] unit tests for repair, canonicalization and the drift gate
-- [ ] embedding drift detection (evidently AI)
+- [x] embedding drift detection (Evidently, with a permutation null)
 - [ ] MLflow graph versioning
 - [x] Kafka producers (`graph.updated` published after a successful build)
 

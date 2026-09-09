@@ -1,19 +1,16 @@
 import argparse
 import functools
-from pathlib import Path
 
 import anthropic
 from anthropic.types import TextBlockParam
 from dotenv import load_dotenv
 
-from pipeline.snapshots import list_extracted, load_snapshot
+from pipeline.embeddings import embed_snapshot, model
 
 load_dotenv()
 
 MODEL = "claude-sonnet-5"
 MAX_TOKENS = 4096
-EMBEDDER = "sentence-transformers/all-MiniLM-L6-v2"
-CACHE = Path("data/embeddings")
 TOP_K = 5
 
 ANSWER_PROMPT = """You answer questions about neuro-symbolic AI research using \
@@ -28,48 +25,11 @@ def _client() -> anthropic.Anthropic:
     return anthropic.Anthropic()
 
 
-@functools.cache
-def _model():
-    from sentence_transformers import SentenceTransformer
-
-    return SentenceTransformer(EMBEDDER)
-
-
-@functools.cache
-def _corpus(snapshot_id: str | None = None):
-    import numpy as np
-
-    # The latest *extracted* snapshot, not the latest raw one: the baseline has
-    # to see exactly the corpus the graph was built from or the comparison is rigged.
-    snapshot = snapshot_id or list_extracted()[-1]
-    papers = load_snapshot(snapshot)
-    path = CACHE / f"{snapshot}.npz"
-
-    if path.exists():
-        stored = np.load(path, allow_pickle=True)
-        return list(stored["ids"]), list(stored["titles"]), list(stored["texts"]), stored["vectors"]
-
-    # One abstract is one chunk. They are short enough that chunking would only
-    # introduce boundary problems, so the baseline is given the easier setup.
-    texts = [f"{p.title}\n\n{p.abstract}" for p in papers]
-    vectors = _model().encode(texts, normalize_embeddings=True, show_progress_bar=True)
-
-    CACHE.mkdir(parents=True, exist_ok=True)
-    np.savez(
-        path,
-        ids=np.array([p.arxiv_id for p in papers]),
-        titles=np.array([p.title for p in papers]),
-        texts=np.array(texts),
-        vectors=vectors,
-    )
-    return [p.arxiv_id for p in papers], [p.title for p in papers], texts, vectors
-
-
 def retrieve(question: str, k: int = TOP_K, snapshot_id: str | None = None) -> list[dict]:
     import numpy as np
 
-    ids, titles, texts, vectors = _corpus(snapshot_id)
-    query = _model().encode([question], normalize_embeddings=True)[0]
+    ids, titles, texts, vectors = embed_snapshot(snapshot_id)
+    query = model().encode([question], normalize_embeddings=True)[0]
     scores = vectors @ query
     top = np.argsort(-scores)[:k]
     return [

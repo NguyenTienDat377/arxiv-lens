@@ -428,6 +428,183 @@ Its value today is preventive; it becomes load-bearing as lineage chains lengthe
 
 # Serving
 
+## `pipeline/embeddings.py` — one embedding cache
+
+### Why it was extracted
+
+`vector_rag.py` owned the SentenceTransformer and the `.npz` cache, and `graph_rag.py` reached across packages for the private `_model`. A third consumer — drift detection — made that untenable. All three now import `pipeline.embeddings`, which matters beyond tidiness: if entity linking and the drift monitor embedded with different settings, drift would be measured against vectors the linker never sees.
+
+### `normalize_embeddings=True` is load-bearing
+
+Raw embeddings have arbitrary length, and length mostly tracks how long the text was rather than what it means. Normalising puts every vector on the unit sphere, and then
+
+```
+cos(a, b) = (a · b) / (|a| |b|)   →   cos(a, b) = a · b     when |a| = |b| = 1
+```
+
+Cosine similarity collapses into a plain dot product. That is why search in both RAGs is a single `vectors @ query` — one matrix multiply scores all 300 papers at once, no division and no norms at run time. Drop the flag and every similarity number in the project silently becomes something else.
+
+### Two caches doing two jobs
+
+`@functools.cache` on `model()` and on `embed_snapshot()` is the in-process cache; the `.npz` file is the across-runs cache. Encoding 300 abstracts costs about ten seconds, so the file means paying it once ever per snapshot, and the decorator means not even re-reading the file within a run.
+
+Both are safe only because embedding is deterministic and pure: same model, same text, same vector, forever. It is also why two snapshots holding the same papers show exactly zero drift — see `embedding_drift.py` below.
+
+`.npz` is numpy's zip-of-arrays, so the 300×384 matrix stays a binary blob instead of becoming 460,800 lines of JSON. The ids, titles and texts are stored beside it because a vector alone cannot tell you which paper row 47 is.
+
+### The `sentence_transformers` import is inside the function
+
+Importing it pulls in torch, which costs seconds. At module level, `--help` on any module that transitively imports this one would pay for torch before printing a usage string.
+
+### `vectors_for(snapshot_id, arxiv_ids)`
+
+The cache is per snapshot and holds every paper. Drift needs *subsets* — the papers added since last time, or one side of a date split — so the selector maps ids to rows rather than re-encoding. Re-encoding a subset would give identical vectors, but slowly, and would tempt a future change into encoding the two sides with different settings.
+
+`vectors[[3, 7, 12]]` is numpy fancy indexing: a list of row numbers returns those rows, in that order. The `if a in index` guard skips ids the snapshot does not contain — deliberate, but it is a silent path, so a caller passing the wrong snapshot gets a smaller matrix rather than an error.
+
+---
+
+## `pipeline/embedding_drift.py` — semantic drift
+
+### Structural drift and semantic drift are different questions
+
+`drift_detector.py`: same papers, same versions — did the *extractor* change? Any difference is a defect, so it exits 1.
+
+`embedding_drift.py`: are the papers still *about the same things*? A field moving into new topics is normal, so this reports by default. What it invalidates is calibration: entity linking's 0.80 threshold and the golden eval's ground truth were both fitted to the old distribution.
+
+### The comparison is the delta, not the snapshot
+
+Snapshots are cumulative. `2026-08-14` and `2026-08-16` contain the *same 300 papers*, so comparing them whole is guaranteed to show zero drift — the embeddings are deterministic. `compare_snapshots` therefore compares papers **new in** the current snapshot against everything in the previous one. Whole-snapshot comparison dilutes any real signal with the overlap.
+
+`compare_within` exists because there is only one meaningful corpus today: it splits one snapshot at its median publication date, which answers "is the recent literature drifting from the older literature the graph was built on".
+
+### Two signals, read together
+
+- **Domain classifier AUC** — train a classifier to tell reference from current. 0.5 means indistinguishable. It catches drift in *any* direction, including ones that leave the mean untouched.
+- **Centroid cosine distance** — only catches a shift in the mean, but is interpretable and cheap.
+
+They disagreed once, which is how the `target` bug below was found. A single metric would have reported drift on an unchanged corpus indefinitely.
+
+### ⚠️ `ModelDriftMethod` mutates the frames you give it
+
+```python
+reference_emb["target"] = [1] * reference_emb.shape[0]
+current_emb["target"] = [0] * current_emb.shape[0]
+```
+
+In place, on the caller's DataFrame. Sharing frames between the two methods made the constant label a 385th embedding dimension, and the centroid distance jumped from 0.008 to 0.452 on *identical* data. Each method now gets `.copy()`.
+
+The symptom was two metrics contradicting each other: AUC 0.482 (indistinguishable) beside a centroid distance screaming drift. Neither number alone would have looked wrong.
+
+### ⚠️ Evidently's bootstrap for centroid distance is not usable here
+
+It builds the null by resampling **both** halves from the reference set, with replacement:
+
+```python
+b_ref_idx  = np.random.choice(reference_emb.shape[0], b_ref_size)
+b_curr_idx = np.random.choice(reference_emb.shape[0], b_curr_size)   # also reference
+```
+
+Two overlapping samples from the same 200 points produce centroids that sit closer than two independent sets would, so the null is too tight. It also estimates a 95th percentile from `N_BOOTSTRAP = 100` draws.
+
+Measured over 40 pairs from an identical distribution it called drift **22 times**, and detected a real shift in only **9 of 20**. A permutation test on the same data: **3/40** and **20/20**. Pool both sides, shuffle, split at the original sizes, repeat 500 times, take the 95th percentile — the null then reflects exactly the question being asked.
+
+Evidently still runs the domain classifier (whose null is principled) and renders the HTML report. The centroid null is computed in `_centroid_drift`.
+
+The lesson generalises: a library giving you a number is not the same as the number being calibrated for your data. Checking a detector's false-positive rate against a distribution with a known answer costs ten lines.
+
+### `MIN_PAPERS = 30`
+
+Below that, both statistics are noise. It returns `skipped` with the sizes rather than a verdict, because "no drift detected on 8 papers" is a sentence that will eventually be quoted as if it meant something.
+
+---
+
+## `retrieval/vector_rag.py` — the baseline
+
+### The whole retrieval engine is four lines
+
+```python
+ids, titles, texts, vectors = embed_snapshot(snapshot_id)
+query = model().encode([question], normalize_embeddings=True)[0]
+scores = vectors @ query
+top = np.argsort(-scores)[:k]
+```
+
+Embed the question the same way the corpus was embedded, dot-product against every paper at once, sort, take k. `np.argsort` is ascending and returns *positions* rather than values, hence the negation.
+
+### Why there is no vector database
+
+300 × 384 float32 is 460 KB, and an exact brute-force search over it takes microseconds. A vector database exists to make approximate nearest-neighbour search fast at millions of documents; at this size it would be slower *and* less accurate than the matrix multiply. The decision worth defending is recognising the scale where infrastructure stops paying for itself.
+
+### It is pinned to the extracted snapshot
+
+`embed_snapshot` defaults to `list_extracted()[-1]`, not the latest raw snapshot. If the baseline searched 320 papers while the graph held 300, the graph-vs-vector comparison would be measuring corpus size instead of architecture.
+
+### One abstract is one chunk
+
+No chunking, no overlap, no windowing. Abstracts are short enough that splitting them would only introduce boundary artefacts, and the baseline should be given the *easier* setup — a baseline you handicapped proves nothing.
+
+---
+
+## `retrieval/graph_rag.py` — plan, link, traverse, answer
+
+### The LLM sits at both ends and never in the middle
+
+```
+question → plan()      LLM: language → QueryPlan(intent, entities)
+         → link()      deterministic: names → graph nodes
+         → traverse()  deterministic: whitelisted Cypher
+         → answer()    LLM: facts → prose
+```
+
+Two LLM calls, and neither one writes a query. `TRAVERSALS` is a fixed dict of six Cypher templates keyed by intent, so the model chooses *which* traversal from a closed set and supplies parameters — it never constructs one. The same closed-enum discipline as extraction, applied to retrieval.
+
+### Embeddings do a different job here than in the baseline
+
+The baseline embeds abstracts to find relevant *documents*. This embeds entity *names* to solve a mapping problem: the question says "neural nets", the graph node is called "neural network". Same model, same dot product, entirely different purpose.
+
+`link()` is two tiers:
+
+1. `_group_key(text)` — the canonicalization key, reused. Free, exact, already handles plurals, punctuation and the alias table.
+2. `_nearest(text)` — nearest neighbour among all entity names, accepted only above `LINK_THRESHOLD`.
+
+Reusing `_group_key` means the linker and the graph builder agree on what counts as the same name by construction.
+
+### `LINK_THRESHOLD = 0.80` is what makes refusal possible ⚠️
+
+`np.argmax` always returns something. In a 1742-name vocabulary there is always a nearest neighbour, however wrong. Without the threshold, "Quantum Banana Framework" links to whatever is least unlike it, the traversal runs, and the answer confidently describes an entity nobody asked about.
+
+```python
+return names[best] if scores[best] >= LINK_THRESHOLD else None
+```
+
+The `None` is the feature. The number was measured, not chosen: every correct match in the vocabulary scores above it and every wrong one below, with `"neural nets" → "deep learning"` sitting at 0.68 as the nearest miss. An earlier substring fallback was removed after it was found to be actively harmful.
+
+### Two places it can decline to answer
+
+```python
+if missing:    return f"Not in the graph: ..."
+if not facts:  return "The graph holds no facts matching that traversal."
+```
+
+One for an entity that could not be linked, one for a traversal that returned nothing. Vector RAG has neither: `[:k]` always returns k documents.
+
+That is the structural finding behind the 100% vs 61% comparison, and it holds independently of the golden set's bias toward graph-shaped questions: **top-k retrieval cannot express absence.** Asked about a relationship that does not exist, it hands the model five plausible abstracts and an implicit invitation to connect them. A traversal can answer "there is no path".
+
+### Side by side
+
+| | vector_rag | graph_rag |
+|---|---|---|
+| embeds | abstracts | entity names |
+| retrieval unit | documents | facts (subject–predicate–object) |
+| retrieval | `vectors @ query`, top-k | Cypher from a whitelist |
+| embedding's job | find relevant text | resolve a name to a node |
+| can return nothing | no — always k | yes, in two places |
+| citations | whole papers | per fact, from `r.papers` |
+| LLM calls | 1 | 2 |
+
+---
+
 ## `proto/graphrag.proto` — the contract
 
 An interface definition language, not a program. `protoc` compiles it into real classes
@@ -552,4 +729,13 @@ scattered.
 
 ## Next
 
-Alias table (`LLM` ≡ `Large Language Models`), then retrieval: question → traversal → answer with citations. Nothing consumes the graph yet, which is what still separates this from GraphRAG. The golden QA eval comes after retrieval, because an eval needs something to evaluate — and it closes the real gap: every gate here measures *stability*, none measures *correctness*. A consistently wrong graph passes all of them.
+Everything on the request path is built and exercised end to end: ingest → extract → repair → canonicalize → drift gate → Neo4j → Z3, and REST → gRPC → traversal → cited answer, with `graph.updated` closing the loop back to cache eviction.
+
+What remains is operational rather than architectural:
+
+- **MLflow graph versioning** — the snapshots and the reuse cache already make a build reproducible; MLflow would make the *comparison between builds* browsable.
+- **Prometheus + Grafana** — the actuator endpoint is exposed and micrometer is on the classpath; nothing scrapes it yet.
+- **k8s manifests**, which need real Dockerfiles first. The existing `graph-pipeline/Dockerfile` is broken: it installs `requirement.txt`, runs a `main.py` that does not exist, `COPY . .` would bake `.env` into a layer, and Alpine has no musl wheels for torch.
+- **A scheduled pipeline run** behind secrets — the one thing per-push CI deliberately cannot do, since ingestion depends on arXiv and extraction costs money.
+
+The standing gap is unchanged and worth restating: every gate here measures *stability*, and only the golden eval measures *correctness*. A consistently wrong graph still passes the drift gate, the Z3 checker and the embedding monitor. The eval is 18 questions; that is the number to grow.
