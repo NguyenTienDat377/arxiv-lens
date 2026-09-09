@@ -5,7 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.org/)
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.1-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-manifests-326ce5.svg)](k8s/)
 
 ---
 
@@ -13,25 +14,40 @@
 
 Most GraphRAG demos stop at "build the graph, query it." **arxiv-lens** asks the harder questions: _what happens when the corpus changes, and how do you know the graph is any good?_
 
-This project builds a drift-aware GraphRAG pipeline over arXiv papers in the neuro-symbolic AI subfield. Extraction is constrained by a hand-derived ontology rather than left open-ended, so the schema can be enforced — violating edges are repaired mechanically where the ontology forces a single answer, and reported where it doesn't. Snapshots are compared before promotion, and the assembled graph is checked by an SMT solver for contradictions no single paper contains.
+This project builds a drift-aware GraphRAG pipeline over arXiv papers in the neuro-symbolic AI subfield. Extraction is constrained by a hand-derived ontology rather than left open-ended, so the schema can be enforced — violating edges are repaired mechanically where the ontology forces a single answer, and reported where it doesn't. Two different drift questions are asked and answered differently: *did the
+extractor change* is structural, measured on papers that cannot legitimately have
+changed, and it blocks promotion with a non-zero exit; *did the corpus change* is
+semantic, measured on abstract embeddings, and it reports rather than blocks
+because a field moving into new topics is normal. The assembled graph is then
+checked by an SMT solver for contradictions no single paper contains.
 
-The system is split into two services connected by Kafka (async events) and gRPC (synchronous queries), served through a Spring Boot REST API.
+The system is split into two services connected by Kafka (async events) and gRPC
+(synchronous queries), served through a Spring Boot REST API. Both are
+containerised and deploy to Kubernetes; a rebuilt graph announces itself on Kafka
+so the API never serves a stale answer, every build is recorded as an MLflow run,
+and the running service is scraped by Prometheus into a provisioned Grafana
+dashboard.
 
 ---
 
 ## Current status
 
-The Python pipeline runs end to end. The Java service has not been started.
+Both services run end to end, on Docker Compose and on Kubernetes. A question
+entering the REST API is answered from the graph with per-fact citations, and a
+rebuilt graph invalidates the API's caches over Kafka without a deploy.
+
+27 of 28 roadmap items are done; the one open item is a scheduled pipeline run,
+which is deliberately not on per-push CI because extraction costs money.
 
 | Stage | Status |
 | ----- | ------ |
 | arXiv ingestion → immutable snapshots | ✅ 300 papers |
 | Ontology (6 entity types, 6 relations, OWL properties) | ✅ |
-| Entity/relation extraction (structured outputs) | ✅ 2047 entities, 1250 relations |
-| Ontology repair + validation | ✅ 11 violations remaining (0.9%) |
-| Canonicalization (name merge, type resolution) | ✅ 1808 → 1754 names |
+| Entity/relation extraction (structured outputs) | ✅ 2047 entity mentions, 1245 relations |
+| Ontology repair + validation | ✅ 13 repaired, 11 remaining (0.9%) |
+| Canonicalization (name merge, type resolution) | ✅ 1808 → 1742 distinct names |
 | Drift gate | ✅ blocks promotion, non-zero exit |
-| Neo4j graph builder | ✅ 2054 nodes, ~3300 edges, idempotent |
+| Neo4j graph builder | ✅ 2042 nodes, 3291 edges, idempotent |
 | Z3 consistency checker | ✅ minimal unsat cores |
 | GraphRAG retrieval with citations | ✅ 6 traversal intents, hybrid entity linking |
 | Golden QA eval | ✅ 18 cases, 12 positive and 6 negative |
