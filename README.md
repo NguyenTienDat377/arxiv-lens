@@ -37,7 +37,13 @@ The Python pipeline runs end to end. The Java service has not been started.
 | Golden QA eval | ✅ 18 cases, 12 positive and 6 negative |
 | Vector-RAG baseline and comparison | ✅ graph 100% vs vector 61% paper recall |
 | Docker Compose (Neo4j + Kafka) | ✅ |
-| Kafka producers, MLflow, query-service | ⬜ not started |
+| Kafka producer + consumer | ✅ `graph.updated` → cache eviction |
+| query-service (Spring Boot, hexagonal) | ✅ REST → gRPC → Neo4j, 31 tests |
+| Embedding drift monitor | ✅ Evidently classifier + permutation null |
+| MLflow graph versioning | ✅ one run per build, params/metrics/commit |
+| Docker images + Kubernetes | ✅ both services, non-root, StatefulSets + Job |
+| Prometheus + Grafana | ✅ 5 provisioned panels |
+| CI | ✅ lint + 60 tests on every push |
 
 A representative query the graph answers today: *`first-order logic` connects 66 distinct pairs of papers* — a relationship no single abstract contains and no vector search over chunks would surface.
 
@@ -148,13 +154,13 @@ This table is not documentation. It is used four times:
 | Schema / validation           | Pydantic, closed `StrEnum` ontology    | ✅ |
 | Formal consistency checking   | Z3 (SMT solver)                        | ✅ |
 | Corpus source                 | arXiv API                              | ✅ |
-| Experiment / graph versioning | MLflow                                 | ⬜ |
+| Experiment / graph versioning | MLflow (SQLite backend)                | ✅ |
 | Embeddings (baseline + linking) | sentence-transformers (MiniLM)       | ✅ |
 | Embedding drift detection     | Evidently (permutation null)            | ✅ |
 | Message broker                | Apache Kafka (KRaft), producer + consumer | ✅ |
 | API framework                 | Spring Boot 4 (Java 21)                | ✅ |
 | Build tool                    | Gradle                                 | ✅ |
-| Observability                 | Prometheus + Grafana                   | ⬜ |
+| Observability                 | Prometheus + Grafana (provisioned)     | ✅ |
 | Service contract              | gRPC + protobuf                        | ✅ |
 | Container images              | Docker, multi-stage, non-root          | ✅ |
 | CI                            | GitHub Actions (lint + tests)          | ✅ |
@@ -182,7 +188,8 @@ arxiv-lens/
 │   │   ├── consistency_checker.py   # Z3 encoding of the ontology's properties
 │   │   ├── events.py                # publishes graph.updated to Kafka
 │   │   ├── embeddings.py            # shared MiniLM cache for baseline, linking, drift
-│   │   └── embedding_drift.py       # semantic drift between two sets of abstracts
+│   │   ├── embedding_drift.py       # semantic drift between two sets of abstracts
+│   │   └── tracking.py              # one MLflow run per graph build
 │   ├── tests/                       # repair, canonicalization, drift gate
 │   ├── data/raw/<snapshot-id>/      # immutable corpus snapshots (gitignored)
 │   ├── data/extracted/<snapshot-id>/# extraction results, keyed by (arxiv_id, version)
@@ -198,14 +205,20 @@ arxiv-lens/
 │   ├── requirements-dev.txt
 │   └── Dockerfile                   # multi-stage; context is the repo root
 ├── proto/graphrag.proto             # GraphRagService: Query, GetGraphStats
-├── infra/docker-compose.yml         # Neo4j + Kafka (KRaft), named volumes
+├── infra/
+│   ├── docker-compose.yml           # Neo4j + Kafka, and two opt-in profiles
+│   ├── prometheus/prometheus.yml    # scrape config
+│   └── grafana/
+│       ├── provisioning/            # datasource + dashboard provider
+│       └── dashboards/              # the dashboard JSON, in git not in a volume
 ├── query-service/                   # Java Spring Boot service (hexagonal)
 │   └── src/main/java/.../queryservice/
 │       ├── domain/                  # records + enums, no framework imports
 │       ├── application/             # GraphPort, QueryUseCase (@Cacheable)
 │       ├── adapter/in/web/          # REST controller, ProblemDetail handler
 │       ├── adapter/in/kafka/        # graph.updated listener → cache eviction
-│       └── adapter/out/grpc/        # the only class that imports protobuf
+│       ├── adapter/out/grpc/        # the only class that imports protobuf
+│       └── config/                  # Caffeine cache, Micrometer histograms
 │   └── Dockerfile                   # gradle build stage → JRE runtime stage
 ├── .dockerignore                    # root, because both builds share that context
 ├── .github/workflows/ci.yml         # lint + tests for both services
@@ -305,6 +318,61 @@ The outbound gRPC adapter can be swapped for an in-memory mock in tests without 
 
 ---
 
+## What the dashboards show
+
+Five panels, provisioned from [infra/grafana/dashboards/arxiv-lens.json](infra/grafana/dashboards/arxiv-lens.json)
+rather than clicked together, so the dashboard is reviewable in a diff:
+
+| panel | query |
+| --- | --- |
+| Request rate | `sum(rate(http_server_requests_seconds_count[5m])) by (uri, status)` |
+| Latency p95 | `histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, uri))` |
+| Cache hit ratio | `sum(rate(cache_gets_total{result="hit"}[5m])) by (cache) / …` |
+| JVM heap | `sum(jvm_memory_used_bytes{area="heap"})` |
+| Cache evictions | `sum(cache_evictions_total) by (cache)` |
+
+The cache panels are the ones specific to this system. A cold `/api/stats` takes
+**4.1 s** — gRPC to Python, a traversal, a count over every label — and the same
+call served from Caffeine takes **8 ms**. The hit ratio falling to zero and
+climbing back is a `graph.updated` event arriving from Kafka and the listener
+evicting, made visible.
+
+Two things had to be turned on for any of it to work. Caffeine records no
+statistics unless asked, so `recordStats()` is required or every cache meter
+reports zero forever; and Micrometer exports timers as count/sum/max, so the
+`_bucket` series `histogram_quantile()` needs comes from a `MeterFilter` bean
+([MetricsConfig.java](query-service/src/main/java/com/arxivlens/queryservice/config/MetricsConfig.java)) —
+Spring Boot 4 removed the `management.metrics.distribution.*` properties that
+did this in Boot 3.
+
+---
+
+## Comparing builds
+
+Each graph build records one MLflow run ([pipeline/tracking.py](graph-pipeline/pipeline/tracking.py)):
+
+```
+PARAMS   snapshot_id, extraction_model, papers_in_snapshot, the three drift thresholds
+METRICS  papers/entities/mentions/relations created, repairs, unresolved_types, violation_rate
+TAGS     git_commit
+```
+
+Snapshots and the `(arxiv_id, version)` extraction cache already made a build
+*reproducible*; this makes builds *comparable*, which is the question that
+actually gets asked — did anything move, and at which commit.
+
+`violation_rate` rather than a violation count, for the same reason the drift
+gate measures a rate: a larger corpus has more violations without being any
+worse.
+
+Tracking never fails a build. The graph is committed to Neo4j before the run is
+logged, so a tracking outage prints a warning and the build still exits 0 — the
+rule the Kafka producer follows. That was not hypothetical: MLflow 3 put the
+`./mlruns` file backend into maintenance mode and refuses to write to it, the
+first call raised, and the build carried on. The store is SQLite now.
+
+---
+
 ## Two kinds of drift
 
 `drift_detector.py` asks a structural question: given the same papers at the
@@ -348,7 +416,7 @@ renders the HTML report; the centroid null is computed here.
 ## Tests and CI
 
 ```
-graph-pipeline   ruff + 25 pytest cases   graph-pipeline/tests/
+graph-pipeline   ruff + 29 pytest cases   graph-pipeline/tests/
 query-service    31 JUnit cases           ./gradlew test
 ```
 
@@ -397,7 +465,7 @@ a schedule with secrets, which is the remaining roadmap item.
 - [x] golden QA eval harness (positive and negative cases)
 - [x] unit tests for repair, canonicalization and the drift gate
 - [x] embedding drift detection (Evidently, with a permutation null)
-- [ ] MLflow graph versioning
+- [x] MLflow graph versioning (params, metrics, git commit per build)
 - [x] Kafka producers (`graph.updated` published after a successful build)
 
 **query-service and infra**
@@ -408,9 +476,9 @@ a schedule with secrets, which is the remaining roadmap item.
 - [x] `query-service` — gRPC outbound adapter
 - [x] `query-service` — Kafka consumer + cache invalidation
 - [x] `infra/` — Docker Compose (Neo4j + Kafka, KRaft, named volumes)
-- [ ] `infra/` — Prometheus + Grafana dashboards
+- [x] `infra/` — Prometheus + Grafana dashboards (provisioned from files)
 - [x] `k8s/` — Kubernetes manifests (StatefulSets, PVCs, Secret, Job, NodePort)
-- [x] CI: lint and tests for both services on every push
+- [x] CI: lint and 60 tests for both services on every push
 - [ ] CI: scheduled pipeline run (ingest → extract → drift gate → build) behind secrets
 
 ---
@@ -492,6 +560,23 @@ the repository root — they share `proto/`, so neither can be built from its ow
 directory — and every address switches from `localhost` to a service name
 (`neo4j:7687`, `kafka:9092`, `graph-pipeline:50051`). Each is an environment variable
 with a localhost default, so the same images serve both modes.
+
+**Watch it**
+
+```bash
+# Dashboards: Prometheus scrapes query-service, Grafana is provisioned from files.
+cd infra
+docker compose --profile app --profile observability up -d
+
+open http://localhost:9090/targets     # query-service should read UP
+open http://localhost:3000             # admin / admin, folder "arxiv-lens"
+```
+
+```bash
+# Build history: one MLflow run per graph build, with the git commit attached.
+cd graph-pipeline
+mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
 
 **Or run it on Kubernetes**
 

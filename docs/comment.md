@@ -913,6 +913,124 @@ A Secret manifest stores base64, which is encoding and not encryption. `01-secre
 
 ---
 
+## `pipeline/tracking.py` — MLflow
+
+### Reproducible was already true; comparable was not
+
+Immutable snapshots and the `(arxiv_id, version)` extraction cache mean a build can be re-run and produce the same graph. What was missing was a way to ask *did anything change between builds, and at which commit* — the answer lived in terminal scrollback. One MLflow run per build fixes that.
+
+### Params are inputs, metrics are outputs
+
+The distinction is not cosmetic. MLflow lets you filter and group runs by **params** and chart **metrics** across runs, so a number in the wrong bucket becomes unusable.
+
+- **params** — `snapshot_id`, `extraction_model`, `papers_in_snapshot`, the three drift thresholds. Things that were *chosen* and could have been chosen otherwise.
+- **metrics** — created counts, `repairs`, `unresolved_types`, `violation_rate`. Things that were *measured*.
+- **tags** — `git_commit`, for finding a run again.
+
+A threshold looks like a result when you read the printout, which is what makes it tempting to log as a metric. It is configuration.
+
+### `violation_rate`, not a violation count
+
+```python
+"violation_rate": violations / relations if relations else 0.0,
+```
+
+Exactly the bug the drift gate shipped with in its first version: a bigger corpus has more violations without being any worse, so the count trends upward on healthy growth. Rates are comparable across builds; counts are not.
+
+### The git commit is the most useful field ⚠️
+
+```python
+subprocess.run([...], capture_output=True, text=True, check=True).stdout.strip()
+```
+
+`subprocess.run` returns a `CompletedProcess`, not the output — without `capture_output=True` the child writes straight to the terminal and the tag reads `CompletedProcess(args=[...], returncode=0)`. `text=True` gives `str` rather than `bytes`.
+
+It falls back to `"unknown"` rather than raising, because the pipeline can legitimately run somewhere without git — inside the container image, for instance, where `.git` is excluded by `.dockerignore`.
+
+### Tracking must never fail the build ⚠️
+
+The whole body is wrapped in `try/except Exception`, returning `None`. Same rule as `publish_graph_updated`, for the same reason: by the time this runs the graph is already committed to Neo4j, so an outage in an observability system must not turn a good build into a failed one.
+
+This was exercised on the first call rather than in theory. **MLflow 3 put the `./mlruns` file backend into maintenance mode and refuses to write to it**, so the initial run raised `MlflowException`, printed a warning, and the build exited 0. The default is `sqlite:///mlflow.db` now — a local database with no server, overridable through `MLFLOW_TRACKING_URI`, the same local-default pattern as `KAFKA_BOOTSTRAP` and `GRPC_TARGET`.
+
+### `relations_total` and `relations_created` differ, and that is the point
+
+A recent build logged 1245 and 1244. One relation is asserted by two papers, and `MERGE` collapses it into a single edge carrying both ids in `r.papers`. The provenance model, visible as a one-unit gap between two metrics.
+
+---
+
+## Observability — Prometheus and Grafana
+
+### Prometheus pulls
+
+Nothing is pushed. The app exposes `/actuator/prometheus` as text and Prometheus scrapes it every 15s, which is why there is no metrics client configuration in the application and why the scrape target must be reachable *from the Prometheus container* — `query-service:8082`, not `localhost:8082`.
+
+Running the Java service on the host while Prometheus runs in a container is the same `localhost`-means-the-container trap arriving from a new direction: it would need `host.docker.internal:8082`.
+
+### `metrics_path` has to be overridden
+
+Prometheus defaults to `/metrics`; Spring exposes `/actuator/prometheus`. Without the override the target reads DOWN with a 404 — loud, at least.
+
+### The config mount path fails *silently* ⚠️
+
+```yaml
+- ./prometheus/prometheus.yml:/etc/prometheus.yml:ro          # wrong
+- ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro   # right
+```
+
+The image ships its own default config at the correct path, so mounting to the wrong one leaves Prometheus running happily with the default: one target, itself, UP. Nothing reports that your config was never read. The tell is the job name on the targets page — if it is not `query-service`, the file was not loaded.
+
+Same shape as `HF_HOME` landing in `/app/opt/hf`: a plausible-but-wrong path where the software has a fallback, so the symptom is wrong behaviour rather than a crash.
+
+### Caffeine records nothing unless asked ⚠️
+
+```java
+Caffeine.newBuilder().maximumSize(500).recordStats()
+```
+
+Spring Boot registers cache meters for every cache in the `CacheManager` regardless, so `cache_gets_total` appears in the endpoint — reporting `0` forever. You get a dashboard with a flat line and no error anywhere.
+
+Worth distinguishing the two failure states, because they point at different problems:
+
+- **metric absent** — the meter was never registered, so the code is not there
+- **metric `0.0`** — registered but never exercised, so the code is there and the traffic is not
+
+The absent case here turned out to be a stale image: the container was running a jar built 57 minutes before `recordStats()` was added. `docker inspect --format '{{.Created}}'` against the source file's mtime settled it in one command. Containers run what was baked in; `bootRun` picks up edits.
+
+### Spring Boot 4 removed `management.metrics.*` ⚠️
+
+Micrometer exports a timer as count/sum/max, and no percentile can be derived from those three numbers. `histogram_quantile()` needs the pre-bucketed `_bucket` series, which Boot 3 enabled with:
+
+```yaml
+management.metrics.distribution.percentiles-histogram.http.server.requests: true
+```
+
+In Boot 4 that property does not exist. Not renamed — **absent**: dumping `META-INF/spring-configuration-metadata.json` out of `spring-boot-actuator-autoconfigure-4.1.1.jar` returns zero `management.metrics` properties. An environment-variable override did nothing either, which ruled out a YAML binding problem.
+
+The replacement is a `MeterFilter` bean in `MetricsConfig.java`. After that, 138 bucket series.
+
+The general lesson: when a Spring property silently does nothing, read the configuration metadata in the jar before debugging the YAML. It is the authoritative list, and it ships with the dependency.
+
+This is the third Boot 4 migration surprise in this project, after `@MockBean` → `@MockitoBean` and Jackson 2 → `tools.jackson`.
+
+### Grafana is provisioned from files, never clicked
+
+Dashboards built in the UI live in Grafana's database and disappear with the volume. Provisioning puts them in git, where they can be reviewed in a diff.
+
+Three details that each cost a restart:
+
+- **`providers:`, plural.** The singular key is valid YAML and silently ignored.
+- **Directory layout.** Grafana reads `provisioning/datasources/` and `provisioning/dashboards/` — subdirectories. A file at `provisioning/dashboards.yml` is never read, and its own log says `can't read dashboard provisioning files from directory`.
+- **The datasource needs a fixed `uid`.** Without one Grafana generates a random uid at provision time, and a committed dashboard referencing `"uid": "prometheus"` renders every panel as *datasource not found*.
+
+The dashboard JSON lives in a separate directory from the provider YAML, so Grafana is never handed a config file to parse as a dashboard.
+
+### The panels that are specific to this system
+
+Request rate, p95 and heap are the same four panels any service gets. The cache panels are the ones that describe *this* system: a cold `/api/stats` takes 4.1 s — gRPC to Python, a traversal, a count over every label — and the cached call takes 8 ms. Watching the hit ratio fall to zero and climb back is the `graph.updated` consumer doing its job, which is otherwise only visible as a log line.
+
+---
+
 ## Infrastructure gotchas
 
 - **Neo4j has two ports.** 7474 is the HTTP browser; **7687 is Bolt**, which drivers speak. `bolt://localhost:7687`, not the URL you log into.
@@ -928,8 +1046,6 @@ Everything on the request path is built and exercised end to end: ingest → ext
 
 What remains is operational rather than architectural:
 
-- **MLflow graph versioning** — the snapshots and the reuse cache already make a build reproducible; MLflow would make the *comparison between builds* browsable.
-- **Prometheus + Grafana** — the actuator endpoint is exposed and micrometer is on the classpath; nothing scrapes it yet.
 - **A scheduled pipeline run** behind secrets — the one thing per-push CI deliberately cannot do, since ingestion depends on arXiv and extraction costs money.
 
 The standing gap is unchanged and worth restating: every gate here measures *stability*, and only the golden eval measures *correctness*. A consistently wrong graph still passes the drift gate, the Z3 checker and the embedding monitor. The eval is 18 questions; that is the number to grow.
