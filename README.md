@@ -737,4 +737,4 @@ holds the Anthropic key and has no business inside a database container.
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+GLPv3.0 — see [LICENSE](LICENSE)
