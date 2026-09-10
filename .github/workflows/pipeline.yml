@@ -85,7 +85,7 @@ jobs:
       # is the rolling-cache pattern. Restore and save are split so the save can
       # be conditional; see the step after build_graph.
       - name: Restore corpus state
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: |
             graph-pipeline/data/raw
@@ -135,7 +135,7 @@ jobs:
       # next run compares against — the gate would quietly re-baseline onto the
       # thing it just refused. A blocked run leaves the cache as it found it.
       - name: Save corpus state
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: |
             graph-pipeline/data/raw
@@ -145,7 +145,7 @@ jobs:
       # always(): a snapshot the gate blocked is exactly the one worth reading.
       - name: Upload run artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pipeline-${{ github.run_id }}
           path: |
