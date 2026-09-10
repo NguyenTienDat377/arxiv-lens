@@ -37,6 +37,12 @@ def log_build(
     must not fail the build — the same rule the Kafka producer follows.
     """
     try:
+        # MLflow auto-detects the source's git SHA via GitPython, which prints a
+        # noisy multi-line complaint when there is no `git` binary — the case
+        # inside the container image. We already record the commit ourselves
+        # (or "unknown"), so tell GitPython to stay quiet.
+        os.environ.setdefault("GIT_PYTHON_REFRESH", "quiet")
+
         import mlflow
 
         # SQLite, not the './mlruns' file store: MLflow 3 put the file backend

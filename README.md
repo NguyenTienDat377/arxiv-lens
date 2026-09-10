@@ -32,12 +32,13 @@ dashboard.
 
 ## Current status
 
-Both services run end to end, on Docker Compose and on Kubernetes. A question
-entering the REST API is answered from the graph with per-fact citations, and a
+Both services run end to end on Docker Compose, and on a local Kubernetes
+cluster from the manifests in `k8s/`. A question entering the REST API is answered from the graph with per-fact citations, and a
 rebuilt graph invalidates the API's caches over Kafka without a deploy.
 
-27 of 28 roadmap items are done; the one open item is a scheduled pipeline run,
-which is deliberately not on per-push CI because extraction costs money.
+All 28 roadmap items are done. The pipeline itself runs on a schedule behind
+secrets rather than on every push, because extraction costs money — see
+[Scheduled pipeline run](#scheduled-pipeline-run).
 
 | Stage | Status |
 | ----- | ------ |
@@ -60,6 +61,7 @@ which is deliberately not on per-push CI because extraction costs money.
 | Docker images + Kubernetes | ✅ both services, non-root, StatefulSets + Job |
 | Prometheus + Grafana | ✅ 5 provisioned panels |
 | CI | ✅ lint + 60 tests on every push |
+| Scheduled pipeline | ✅ gated cron, cost guard, drift gate blocks the build |
 
 A representative query the graph answers today: *`first-order logic` connects 66 distinct pairs of papers* — a relationship no single abstract contains and no vector search over chunks would surface.
 
@@ -237,7 +239,9 @@ arxiv-lens/
 │       └── config/                  # Caffeine cache, Micrometer histograms
 │   └── Dockerfile                   # gradle build stage → JRE runtime stage
 ├── .dockerignore                    # root, because both builds share that context
-├── .github/workflows/ci.yml         # lint + tests for both services
+├── .github/workflows/
+│   ├── ci.yml                       # lint + tests for both services, every push
+│   └── pipeline.yml                 # ingest → extract → gate → build, scheduled
 ├── k8s/                             # Kubernetes manifests
 │   ├── 00-namespace.yml
 │   ├── 01-secrets.example.yml       # template; the real Secret is gitignored
@@ -451,13 +455,62 @@ in-process broker (`@EmbeddedKafka`) and the gRPC adapter against a real
 in-process gRPC server, so enum mapping is verified by name rather than by
 ordinal.
 
-**What CI deliberately does not do.** The roadmap originally called for
-`ingest → extract → drift gate → build` on every push. It cannot: ingestion
-depends on the arXiv API, extraction costs money and is non-deterministic, the
-drift gate needs two snapshots that are not in the repository, and the builder
-needs a populated Neo4j. Running that per-push would make the pipeline's cost
-and the arXiv API's availability into gates on unrelated commits. It belongs on
-a schedule with secrets, which is the remaining roadmap item.
+**What per-push CI deliberately does not do.** `ingest → extract → drift gate →
+build` is not on `ci.yml`. Ingestion depends on the arXiv API, extraction costs
+money and is non-deterministic, the drift gate needs two snapshots that are not
+in the repository, and the builder needs a populated Neo4j. Running it per-push
+would make the pipeline's cost and arXiv's availability into gates on unrelated
+commits. It runs on a schedule instead.
+
+## Scheduled pipeline run
+
+[.github/workflows/pipeline.yml](.github/workflows/pipeline.yml) runs the four
+stages against the live Neo4j. It differs from `ci.yml` in every way that
+matters: it spends money, it writes to a real database, and it is stateful.
+
+Setup, once:
+
+| Where | Name | Value |
+| ----- | ---- | ----- |
+| Environment `production` → secrets | `ANTHROPIC_API_KEY` | extraction |
+| | `NEO4J_URL` | `neo4j+s://<id>.databases.neo4j.io` |
+| | `NEO4J_USERNAME` / `NEO4J_PASSWORD` | Aura credentials |
+| Repository → variables | `PIPELINE_SCHEDULE_ENABLED` | `true` to arm the cron |
+
+The `production` environment scopes the credentials to this one job and is where
+a required reviewer goes, if you want a human to approve anything that spends.
+
+**The cron is committed but inert.** The job's `if` requires either a manual
+dispatch or `PIPELINE_SCHEDULE_ENABLED == 'true'`, so the schedule is turned on
+and off from the settings page without a commit. A workflow that starts billing
+the moment it is merged is not one you want to merge.
+
+**Cost control is the reuse index, and the guard exists because it can vanish.**
+`load_extraction_index()` reuses any `(arxiv_id, version)` already extracted, so
+a normal week pays for the handful of new papers. That index lives in
+`data/extracted/`, which is gitignored, so the workflow carries it between runs
+in an `actions/cache`. Caches are best-effort — evicted after seven days unused,
+dropped when the repository's 10 GB fills — and on a cache miss every paper looks
+new. So `extract_entities` takes `--max-new`: above that many pending papers it
+exits non-zero *before* submitting the batch. Nothing that costs money is allowed
+to depend on a cache being there.
+
+It refuses rather than truncating on purpose. A truncated 40-paper snapshot would
+**pass** the drift gate, which measures papers that changed, not papers that are
+missing — and would then be loaded and recorded in MLflow as the state of the
+corpus. Exiting is the only behaviour that cannot lie.
+
+**The cache is saved after the build, not in a post-step.** `actions/cache` saves
+even when the job failed. If a drift-blocked run saved its state, the next run
+would compare against the snapshot that was just rejected — the gate would
+quietly re-baseline onto its own failure. `cache/restore` and `cache/save` are
+split so a blocked run leaves the baseline alone; the rejected snapshot still
+uploads as an artifact for reading.
+
+Two integrations are absent by design: no Kafka broker is reachable from a
+runner, so `publish_graph_updated()` reports "not published" and the build
+continues, which is what that module's blanket `try/except` is for; and MLflow
+writes to a throwaway SQLite file that is uploaded as an artifact.
 
 ---
 
@@ -495,11 +548,37 @@ a schedule with secrets, which is the remaining roadmap item.
 - [x] `infra/` — Prometheus + Grafana dashboards (provisioned from files)
 - [x] `k8s/` — Kubernetes manifests (StatefulSets, PVCs, Secret, Job, NodePort)
 - [x] CI: lint and 60 tests for both services on every push
-- [ ] CI: scheduled pipeline run (ingest → extract → drift gate → build) behind secrets
+- [x] CI: scheduled pipeline run (ingest → extract → drift gate → build) behind secrets
 
 ---
 
 ## Getting started
+
+### The 90-second demo
+
+```bash
+git clone https://github.com/NguyenTienDat377/arxiv-lens.git
+cd arxiv-lens
+cp graph-pipeline/.env.example graph-pipeline/.env   # add ANTHROPIC_API_KEY
+
+./scripts/demo.sh up      # build + start everything, wait for health
+./scripts/demo.sh seed    # load the 300-paper graph into Neo4j (once)
+./scripts/demo.sh check   # graph stats through REST -> gRPC -> Neo4j (free)
+./scripts/demo.sh query "What builds on Logic Tensor Networks?"   # cited answer (a few cents)
+./scripts/demo.sh down
+```
+
+`up` prints every URL: the REST API on `:8082`, Swagger on `/swagger-ui.html`,
+the Neo4j browser on `:7474`, Grafana on `:3000`, Prometheus on `:9090`.
+
+Sample responses are checked in under [`docs/demo/`](docs/demo/) so the output
+is visible without running anything:
+
+- [`api-stats.json`](docs/demo/api-stats.json) — 300 papers, 1742 entities, 1244 relations, broken out by type
+- [`api-query-ltn.json`](docs/demo/api-query-ltn.json) — *"What builds on Logic Tensor Networks?"* answered from three `EXTENDS` edges, each citing its arXiv id
+- [`api-query-hallucination.json`](docs/demo/api-query-hallucination.json) — eleven methods, eleven citations, no fact without a paper behind it
+
+### Everything the manual way
 
 **Prerequisites**
 

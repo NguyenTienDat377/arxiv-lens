@@ -1,0 +1,155 @@
+name: Pipeline
+
+# Runs the four pipeline stages end to end against the live Neo4j:
+#
+#   ingest_arxiv -> extract_entities -> drift_detector -> build_graph
+#
+# Unlike ci.yml this workflow spends money (one Claude call per new paper) and
+# writes to a real database, so every default here is the cautious one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_results:
+        description: "Papers to request from arXiv"
+        default: "300"
+      max_new:
+        description: "Refuse the run if more than this many papers need extracting"
+        default: "40"
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+
+# Queue, never cancel — the opposite of ci.yml. Cancelling a run mid-batch throws
+# away tokens that have already been paid for, and two runs writing to the same
+# graph at once is not something the loaders are asked to survive.
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    name: ingest, extract, gate, build
+    runs-on: ubuntu-latest
+
+    # The cron above is committed but inert. Set the repository variable
+    # PIPELINE_SCHEDULE_ENABLED to "true" to switch it on, and unset it to switch
+    # it off again — neither needs a commit. Manual dispatch always runs.
+    if: github.event_name == 'workflow_dispatch' || vars.PIPELINE_SCHEDULE_ENABLED == 'true'
+
+    # Scopes the Neo4j and Anthropic credentials to this job, and gives the
+    # repository a place to hang a required reviewer on a job that spends money.
+    environment: production
+
+    # await_batch() polls forever by design. A batch that never completes should
+    # fail the run rather than hold a runner open.
+    timeout-minutes: 90
+
+    defaults:
+      run:
+        working-directory: graph-pipeline
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      NEO4J_URL: ${{ secrets.NEO4J_URL }}
+      NEO4J_USERNAME: ${{ secrets.NEO4J_USERNAME }}
+      NEO4J_PASSWORD: ${{ secrets.NEO4J_PASSWORD }}
+      MAX_RESULTS: ${{ inputs.max_results || '300' }}
+      MAX_NEW: ${{ inputs.max_new || '40' }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: graph-pipeline/requirements.txt
+
+      # CPU torch first, from its own index — the same trick ci.yml and the
+      # Dockerfile use. sentence-transformers is not on this code path, but it is
+      # in requirements.txt, and installing less than the project declares is how
+      # a green run hides an uninstallable project.
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements.txt
+
+      # Past extractions are what make a run cheap: load_extraction_index() reuses
+      # any (arxiv_id, version) it has already paid for, so a normal week extracts
+      # only the handful of genuinely new papers. They are also what gives the
+      # drift gate something to compare against — with one snapshot it has nothing
+      # to say.
+      #
+      # The key always misses and the prefix always hits the newest entry, which
+      # is the rolling-cache pattern. Restore and save are split so the save can
+      # be conditional; see the step after build_graph.
+      - name: Restore corpus state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            graph-pipeline/data/raw
+            graph-pipeline/data/extracted
+          key: pipeline-data-${{ github.run_id }}
+          restore-keys: pipeline-data-
+
+      - name: Ingest
+        run: python -m pipeline.ingest_arxiv --max-results "$MAX_RESULTS"
+
+      # Both flags are load-bearing. --limit defaults to 1 (the safe interactive
+      # default), and without --batch the module prints extractions instead of
+      # writing them. --max-new is the cost guard: if the cache did not restore,
+      # every paper looks new and this exits rather than billing for the corpus.
+      - name: Extract
+        run: python -m pipeline.extract_entities --limit 0 --batch --max-new "$MAX_NEW"
+
+      # The reason the chain is a chain: a non-zero exit here stops the run before
+      # build_graph, so a snapshot the gate rejects never reaches the graph. The
+      # report is copied to the run summary so the reason is visible without
+      # opening the log.
+      - name: Drift gate
+        run: |
+          set +e
+          python -m pipeline.drift_detector --verbose | tee drift.txt
+          status=${PIPESTATUS[0]}
+          {
+            echo '## Drift gate'
+            echo '```'
+            cat drift.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      # No --reset: the loaders MERGE, so a re-run of an unchanged snapshot is a
+      # no-op rather than a rebuild.
+      #
+      # Two integrations are absent by design. No Kafka broker is reachable, so
+      # publish_graph_updated() times out after 8s, reports "not published" and
+      # returns False without failing the build. MLflow writes to a throwaway
+      # sqlite file on the runner, which the next step uploads.
+      - name: Build graph
+        run: python -m pipeline.build_graph
+
+      # Only after a green build. actions/cache saves in a post-step that runs on
+      # failure too, which would leave a rejected snapshot as the baseline the
+      # next run compares against — the gate would quietly re-baseline onto the
+      # thing it just refused. A blocked run leaves the cache as it found it.
+      - name: Save corpus state
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            graph-pipeline/data/raw
+            graph-pipeline/data/extracted
+          key: pipeline-data-${{ github.run_id }}
+
+      # always(): a snapshot the gate blocked is exactly the one worth reading.
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-${{ github.run_id }}
+          path: |
+            graph-pipeline/data/extracted
+            graph-pipeline/mlflow.db
+          if-no-files-found: warn
+          retention-days: 30

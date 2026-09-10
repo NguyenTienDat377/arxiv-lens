@@ -1,6 +1,7 @@
 import argparse
 import functools
 import re
+import sys
 import time
 
 import anthropic
@@ -291,6 +292,12 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=1)
     parser.add_argument("--batch", action="store_true")
     parser.add_argument("--no-reuse", action="store_true")
+    parser.add_argument(
+        "--max-new",
+        type=int,
+        default=None,
+        help="refuse to extract if more than this many papers are new",
+    )
     args = parser.parse_args()
 
     snapshot_id = args.snapshot or latest_snapshot()
@@ -322,6 +329,15 @@ def main() -> None:
         paper for paper in papers if (paper.arxiv_id, paper.version) not in index
     ]
     print(f"{len(reused)} reused, {len(pending)} to extract")
+
+    # Reuse is what keeps an unattended run cheap, and reuse depends on past
+    # extractions being present. When they are not — a cold CI runner, an evicted
+    # cache — every paper looks new and the batch silently costs the full corpus.
+    # Refuse rather than truncate: a short snapshot passes the drift gate, which
+    # only measures papers that changed, not papers that vanished.
+    if args.max_new is not None and len(pending) > args.max_new:
+        print(f"refusing: {len(pending)} new papers exceeds --max-new {args.max_new}")
+        sys.exit(1)
 
     extractions: dict[str, PaperExtraction] = {}
     failures: dict[str, str] = {}

@@ -1,0 +1,36 @@
+{
+    "answer": "Based on the supplied facts, three works build on Logic Tensor Networks:\n\n- **Iterative Logic Tensor Network** [2604.26521]\n- **FOT-LTN** [2606.29972]\n- **sLTN** [2608.11136]\n\nThe graph does not provide further details on how each extends the original framework.",
+    "facts": [
+        {
+            "subject": "Iterative Logic Tensor Network",
+            "predicate": "EXTENDS",
+            "object": "Logic Tensor Networks",
+            "papers": [
+                "2604.26521"
+            ]
+        },
+        {
+            "subject": "FOT-LTN",
+            "predicate": "EXTENDS",
+            "object": "Logic Tensor Networks",
+            "papers": [
+                "2606.29972"
+            ]
+        },
+        {
+            "subject": "sLTN",
+            "predicate": "EXTENDS",
+            "object": "Logic Tensor Networks",
+            "papers": [
+                "2608.11136"
+            ]
+        }
+    ],
+    "intent": "LINEAGE",
+    "linkedEntities": [
+        "Logic Tensor Networks"
+    ],
+    "unresolvedEntities": [],
+    "status": "OK",
+    "snapshotId": "2026-08-16T04-37-21Z"
+}

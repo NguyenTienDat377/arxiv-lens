@@ -1,0 +1,100 @@
+{
+    "answer": "According to the graph, the following methods address hallucination:\n\n- RAG [2601.04568]\n- VeNRA [2603.04663]\n- CORE-Acu [2603.08321]\n- OMNIFLOW [2603.15797]\n- GraphRAG [2603.19276]\n- SafePilot [2603.21523]\n- DUPLEX [2603.23909]\n- Foundation AgenticOS [2604.00555]\n- CircuitSynth [2604.10114]\n- hybrid verification architecture [2605.26942]\n- TRISM [2606.15646]",
+    "facts": [
+        {
+            "subject": "RAG",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2601.04568"
+            ]
+        },
+        {
+            "subject": "VeNRA",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2603.04663"
+            ]
+        },
+        {
+            "subject": "CORE-Acu",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2603.08321"
+            ]
+        },
+        {
+            "subject": "OMNIFLOW",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2603.15797"
+            ]
+        },
+        {
+            "subject": "GraphRAG",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2603.19276"
+            ]
+        },
+        {
+            "subject": "SafePilot",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2603.21523"
+            ]
+        },
+        {
+            "subject": "DUPLEX",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2603.23909"
+            ]
+        },
+        {
+            "subject": "Foundation AgenticOS",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2604.00555"
+            ]
+        },
+        {
+            "subject": "CircuitSynth",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2604.10114"
+            ]
+        },
+        {
+            "subject": "hybrid verification architecture",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2605.26942"
+            ]
+        },
+        {
+            "subject": "TRISM",
+            "predicate": "ADDRESSES",
+            "object": "hallucination",
+            "papers": [
+                "2606.15646"
+            ]
+        }
+    ],
+    "intent": "WHAT_ADDRESSES",
+    "linkedEntities": [
+        "hallucination"
+    ],
+    "unresolvedEntities": [],
+    "status": "OK",
+    "snapshotId": "2026-08-16T04-37-21Z"
+}

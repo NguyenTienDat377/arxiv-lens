@@ -1,0 +1,22 @@
+{
+    "snapshotId": "2026-08-16T04-37-21Z",
+    "papers": 300,
+    "entities": 1742,
+    "relations": 1244,
+    "entitiesByLabel": {
+        "Dataset": 192,
+        "Problem": 247,
+        "Formalism": 217,
+        "Task": 368,
+        "Method": 614,
+        "Model": 104
+    },
+    "relationsByType": {
+        "COMBINES": 101,
+        "USES": 409,
+        "COMPILES_TO": 20,
+        "ADDRESSES": 480,
+        "EXTENDS": 33,
+        "EVALUATED_ON": 201
+    }
+}

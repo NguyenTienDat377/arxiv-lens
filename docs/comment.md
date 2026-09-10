@@ -1040,12 +1040,32 @@ Request rate, p95 and heap are the same four panels any service gets. The cache 
 
 ---
 
+## Scheduled pipeline — `.github/workflows/pipeline.yml`
+
+The four stages had CLIs from the start; automating them was never the hard part. What made this different from `ci.yml` is that the workflow **spends money, writes to a live database, and is stateful** — and the state is where the cost and the correctness problems turn out to be the same problem.
+
+**`data/extracted/` is doing two jobs at once.** `load_extraction_index()` reuses any `(arxiv_id, version)` already paid for, so a normal week extracts only genuinely new papers. And `drift_detector` compares the last two entries of `list_extracted()`. On an empty runner both fail *silently and in the expensive direction*: extraction re-runs the whole corpus, and the gate prints "first extracted snapshot; nothing to compare" and returns 0. A green run that quietly billed for 300 papers and skipped its own safety check.
+
+**A cache is a performance optimisation; it must never be a correctness dependency.** GitHub evicts caches after seven days unused and drops them when the repository's 10 GB fills. So the cache carries the state, and `--max-new` makes its absence loud: above N pending papers `extract_entities` exits non-zero before `submit_batch` is ever called. Verified by pointing it at a 500-paper snapshot with 300 already extracted — `refusing: 200 new papers exceeds --max-new 5`, exit 1, no batch created. Roughly two dollars not spent.
+
+**Refuse, don't truncate.** Capping `pending` to the first N was the obvious alternative and it is a trap. `failures()` tests `changed_share`, `lost_edge_share` and `violation_rate_increase` — none of which fire on papers merely being *absent*. A truncated snapshot passes the gate, gets loaded, and is recorded in MLflow as the state of the corpus. Exiting is the only option that cannot produce a wrong answer confidently.
+
+**Save the cache after the build, not in a post-step.** `actions/cache` saves in a post-step that runs on failure too. A drift-blocked run would therefore save its rejected snapshot as the baseline, and the next run would compare against the thing the gate just refused — the gate silently re-baselining onto its own failure, which is the exact failure mode a gate exists to prevent. Splitting into `cache/restore` and `cache/save`, with the save after `build_graph`, means a blocked run leaves the baseline untouched. The cost is re-extracting on retry; that is the right trade for a rare event, and the rejected snapshot still uploads as an artifact.
+
+**`concurrency` is the opposite of `ci.yml`'s.** There, a second push makes the first run's answer irrelevant, so `cancel-in-progress: true`. Here, cancelling mid-batch throws away tokens already paid for, and two runs writing the same graph is not something the loaders were asked to survive. Queue, never cancel.
+
+**Two flags are load-bearing and both are easy to miss.** `--limit` defaults to `1` — the safe interactive default — so a workflow that omits it produces a one-paper snapshot. And without `--batch` the module prints extractions instead of writing them. Both silent.
+
+**No snapshot ID is plumbed between steps.** Every downstream stage already defaults to the newest — `latest_snapshot()`, `list_extracted()[-1]` — and IDs are UTC timestamps in a lexically sortable format. Parsing an ID out of stdout would add a failure mode to remove one that does not exist.
+
+**The cron is committed but inert**, gated on a repository *variable* rather than a code change, so arming and disarming it is a settings-page action. A workflow that starts billing the moment it merges is not one to merge.
+
+---
+
 ## Next
 
 Everything on the request path is built and exercised end to end: ingest → extract → repair → canonicalize → drift gate → Neo4j → Z3, and REST → gRPC → traversal → cited answer, with `graph.updated` closing the loop back to cache eviction.
 
-What remains is operational rather than architectural:
-
-- **A scheduled pipeline run** behind secrets — the one thing per-push CI deliberately cannot do, since ingestion depends on arXiv and extraction costs money.
+The last operational gap is closed too: the pipeline runs on a gated schedule behind secrets, with a cost guard that fails loudly when its cache is gone and a drift gate that stops the build before the graph is touched.
 
 The standing gap is unchanged and worth restating: every gate here measures *stability*, and only the golden eval measures *correctness*. A consistently wrong graph still passes the drift gate, the Z3 checker and the embedding monitor. The eval is 18 questions; that is the number to grow.
