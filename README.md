@@ -485,15 +485,25 @@ dispatch or `PIPELINE_SCHEDULE_ENABLED == 'true'`, so the schedule is turned on
 and off from the settings page without a commit. A workflow that starts billing
 the moment it is merged is not one you want to merge.
 
-**Cost control is the reuse index, and the guard exists because it can vanish.**
+**Cost control is the reuse index, which is why it is committed.**
 `load_extraction_index()` reuses any `(arxiv_id, version)` already extracted, so
-a normal week pays for the handful of new papers. That index lives in
-`data/extracted/`, which is gitignored, so the workflow carries it between runs
-in an `actions/cache`. Caches are best-effort — evicted after seven days unused,
-dropped when the repository's 10 GB fills — and on a cache miss every paper looks
-new. So `extract_entities` takes `--max-new`: above that many pending papers it
-exits non-zero *before* submitting the batch. Nothing that costs money is allowed
-to depend on a cache being there.
+a run pays only for papers it has never seen. `graph-pipeline/data/extracted/` is
+therefore the one thing under `data/` that is *not* gitignored — 448K of JSONL
+holding all 300 papers across two snapshots. A fresh checkout gets both the reuse
+index and a drift-gate baseline for free.
+
+The alternative was to carry it only in an `actions/cache`, and that has a
+bootstrap deadlock: the first run finds an empty cache, sees 300 new papers, is
+refused by the guard below, and so never reaches the step that saves the cache.
+Forever. Seeding it by paying full price once would have made a best-effort cache
+load-bearing for correctness, which is precisely what a cache must never be. The
+workflow still caches — new extractions carried between runs — but only as an
+optimisation on top of the committed floor.
+
+**The guard exists because that floor can still be out-run.** Caches get evicted,
+and arXiv keeps publishing. So `extract_entities` takes `--max-new`: above that
+many pending papers it exits non-zero *before* submitting the batch, turning a
+quietly expensive run into a loud one.
 
 It refuses rather than truncating on purpose. A truncated 40-paper snapshot would
 **pass** the drift gate, which measures papers that changed, not papers that are
