@@ -1,0 +1,46 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "Interface" },
+    { "id": "page-2", "name": "Directions considered" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 1440, "h": 900, "title": "Interface — editorial", "page": "page-1", "is_interactive": true },
+    { "file": "Instrument.dc.html", "x": 0, "y": 0, "w": 1440, "h": 900, "title": "A — Instrument (not chosen)", "page": "page-2" },
+    { "file": "GraphFirst.dc.html", "x": 1560, "y": 0, "w": 1440, "h": 900, "title": "C — Graph-first (not chosen)", "page": "page-2" }
+  ],
+  "annotations": [
+    {
+      "id": "note-live",
+      "x": 1560,
+      "y": 0,
+      "w": 480,
+      "page": "page-1",
+      "text": "THIS ONE RESPONDS — click into the artboard first.\n\n· Click either question on the landing screen to answer it.\n· Hover a row in the answer list — its edge and node in Fig. 1 light up, and vice versa. That linkage is the whole thesis: the answer is not recalled, it is assembled from those edges.\n· \"← ask another\" returns to the landing screen.\n\nTwo questions are wired, both from your captured responses: Logic Tensor Networks (3 facts) and hallucination (11 facts). The second is there on purpose — it is the case that proves the layout survives a long answer.\n\nThere is no network here, so nothing reaches Aura. Latency figures are placeholders; every name, arXiv id and count is real."
+    },
+    {
+      "id": "note-next",
+      "x": 1560,
+      "y": 400,
+      "w": 480,
+      "page": "page-1",
+      "text": "STILL OPEN\n\n· Third screen — the entity explorer — not drawn yet. Worth doing once you know whether you want it as a separate page or as clicking a node here.\n· No error state yet: unresolved entity, empty result, service down. The API returns a status field for these.\n· Mobile width untested."
+    },
+    {
+      "id": "note-instrument",
+      "x": 0,
+      "y": -260,
+      "w": 460,
+      "page": "page-2",
+      "text": "A — INSTRUMENT (not chosen)\n\nDense, monospaced, dark. Facts as a table, provenance in the corner. Matched the project's engineering character but read as competent tooling rather than something you would screenshot."
+    },
+    {
+      "id": "note-graphfirst",
+      "x": 1560,
+      "y": -260,
+      "w": 460,
+      "page": "page-2",
+      "text": "C — GRAPH-FIRST (not chosen)\n\nFull-bleed canvas, answer floating over a dimmed neighbourhood. The most memorable image, but the answer text competed with the graph and it drifted toward Neo4j Bloom.\n\nWorth revisiting if the entity explorer becomes its own screen — this is what that screen probably wants to look like."
+    }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

@@ -1,0 +1,266 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,600;1,400&family=Public+Sans:wght@400;500;600&display=swap">
+  <style>
+    body { margin: 0; }
+    a { color: oklch(0.52 0.13 40); text-decoration: none; border-bottom: 1px solid oklch(0.82 0.06 40); }
+    a:hover { color: oklch(0.42 0.13 40); border-bottom-color: oklch(0.52 0.13 40); }
+    .ask { cursor: pointer; }
+    .ask:hover .askq { color: oklch(0.52 0.13 40); }
+    .src { cursor: pointer; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; box-sizing: border-box; background: oklch(0.977 0.008 85); color: oklch(0.26 0.015 60); font-family: Spectral, Georgia, serif; display: flex; flex-direction: column;">
+
+  <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 26px 56px 0; flex-shrink: 0;">
+    <div style="font-size: 17px; font-weight: 600; letter-spacing: 0.02em;">arxiv<span style="color: oklch(0.52 0.13 40);">&thinsp;&middot;&thinsp;</span>lens</div>
+    <div style="font-family: 'Public Sans', system-ui, sans-serif; font-size: 10px; letter-spacing: 0.11em; text-transform: uppercase; color: oklch(0.55 0.012 60);">300 papers &nbsp;&middot;&nbsp; 1742 entities &nbsp;&middot;&nbsp; 1244 relations</div>
+  </div>
+  <div style="height: 1px; background: oklch(0.86 0.012 60); margin: 18px 56px 0; flex-shrink: 0;"></div>
+
+  <sc-if value="{{isEmpty}}" hint-placeholder-val="{{ false }}">
+    <div style="display: grid; grid-template-columns: 132px 1fr 460px; gap: 40px; padding: 60px 56px 0; flex-grow: 1; min-height: 0;">
+
+      <div style="font-family: 'Public Sans', sans-serif; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; color: oklch(0.60 0.012 60); padding-top: 12px;">Ask</div>
+
+      <div style="display: flex; flex-direction: column; gap: 34px; min-width: 0;">
+        <div style="font-size: 40px; line-height: 1.2; font-weight: 300; letter-spacing: -0.015em; color: oklch(0.22 0.015 60);">Ask the graph, not the model.</div>
+        <div style="font-size: 17px; line-height: 1.7; color: oklch(0.38 0.015 60); max-width: 52ch;">Every answer is assembled from typed relations extracted from 300 neuro-symbolic AI abstracts. Where the graph is silent, the answer says so rather than guessing.</div>
+
+        <div style="display: flex; flex-direction: column; gap: 0; border-top: 1px solid oklch(0.88 0.012 60); margin-top: 6px;">
+          <sc-for list="{{samples}}" as="s" hint-placeholder-count="2">
+            <div class="ask" onClick="{{ s.pick }}" style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding: 19px 0; border-bottom: 1px solid oklch(0.88 0.012 60);">
+              <div class="askq" style="font-size: 19px; font-weight: 300; color: oklch(0.26 0.015 60);">{{ s.question }}</div>
+              <div style="font-family: 'Public Sans', sans-serif; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: oklch(0.62 0.012 60); white-space: nowrap;">{{ s.meta }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 18px; border-left: 1px solid oklch(0.88 0.012 60); padding-left: 32px; padding-top: 12px;">
+        <div style="font-family: 'Public Sans', sans-serif; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; color: oklch(0.60 0.012 60);">Corpus composition</div>
+
+        <div style="display: flex; flex-direction: column; gap: 13px;">
+          <div style="display: flex; flex-direction: column; gap: 5px;"><div style="display: flex; justify-content: space-between; font-family: 'Public Sans', sans-serif; font-size: 11px; color: oklch(0.38 0.015 60);"><span>Method</span><span style="color: oklch(0.58 0.012 60);">614</span></div><div style="height: 3px; background: oklch(0.52 0.13 40); width: 100%;"></div></div>
+          <div style="display: flex; flex-direction: column; gap: 5px;"><div style="display: flex; justify-content: space-between; font-family: 'Public Sans', sans-serif; font-size: 11px; color: oklch(0.38 0.015 60);"><span>Task</span><span style="color: oklch(0.58 0.012 60);">368</span></div><div style="height: 3px; background: oklch(0.66 0.10 40); width: 60%;"></div></div>
+          <div style="display: flex; flex-direction: column; gap: 5px;"><div style="display: flex; justify-content: space-between; font-family: 'Public Sans', sans-serif; font-size: 11px; color: oklch(0.38 0.015 60);"><span>Problem</span><span style="color: oklch(0.58 0.012 60);">247</span></div><div style="height: 3px; background: oklch(0.72 0.08 40); width: 40%;"></div></div>
+          <div style="display: flex; flex-direction: column; gap: 5px;"><div style="display: flex; justify-content: space-between; font-family: 'Public Sans', sans-serif; font-size: 11px; color: oklch(0.38 0.015 60);"><span>Formalism</span><span style="color: oklch(0.58 0.012 60);">217</span></div><div style="height: 3px; background: oklch(0.76 0.07 40); width: 35%;"></div></div>
+          <div style="display: flex; flex-direction: column; gap: 5px;"><div style="display: flex; justify-content: space-between; font-family: 'Public Sans', sans-serif; font-size: 11px; color: oklch(0.38 0.015 60);"><span>Dataset</span><span style="color: oklch(0.58 0.012 60);">192</span></div><div style="height: 3px; background: oklch(0.80 0.06 40); width: 31%;"></div></div>
+          <div style="display: flex; flex-direction: column; gap: 5px;"><div style="display: flex; justify-content: space-between; font-family: 'Public Sans', sans-serif; font-size: 11px; color: oklch(0.38 0.015 60);"><span>Model</span><span style="color: oklch(0.58 0.012 60);">104</span></div><div style="height: 3px; background: oklch(0.84 0.05 40); width: 17%;"></div></div>
+        </div>
+
+        <div style="height: 1px; background: oklch(0.88 0.012 60); margin-top: 4px;"></div>
+        <div style="font-family: 'Public Sans', sans-serif; font-size: 11px; line-height: 1.7; color: oklch(0.55 0.012 60);">Relations are typed, not merely counted: <span style="font-family: Spectral, serif; font-style: italic; color: oklch(0.38 0.015 60);">extends</span>, <span style="font-family: Spectral, serif; font-style: italic; color: oklch(0.38 0.015 60);">uses</span>, <span style="font-family: Spectral, serif; font-style: italic; color: oklch(0.38 0.015 60);">evaluated&nbsp;on</span>, <span style="font-family: Spectral, serif; font-style: italic; color: oklch(0.38 0.015 60);">addresses</span>, <span style="font-family: Spectral, serif; font-style: italic; color: oklch(0.38 0.015 60);">combines</span>, <span style="font-family: Spectral, serif; font-style: italic; color: oklch(0.38 0.015 60);">compiles&nbsp;to</span>.</div>
+      </div>
+
+    </div>
+  </sc-if>
+
+  <sc-if value="{{isAnswered}}" hint-placeholder-val="{{ true }}">
+    <div style="display: grid; grid-template-columns: 132px 1fr 460px; gap: 40px; padding: 34px 56px 0; flex-grow: 1; min-height: 0;">
+
+      <div style="display: flex; flex-direction: column; gap: 6px; padding-top: 7px;">
+        <div style="font-family: 'Public Sans', sans-serif; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; color: oklch(0.60 0.012 60);">Question</div>
+        <div style="font-family: 'Public Sans', sans-serif; font-size: 10px; color: oklch(0.52 0.13 40); font-weight: 500;">{{ q.intent }}</div>
+        <div style="font-family: 'Public Sans', sans-serif; font-size: 10px; color: oklch(0.60 0.012 60); line-height: 1.5;">{{ q.resolved }}</div>
+        <div class="ask" onClick="{{ reset }}" style="font-family: 'Public Sans', sans-serif; font-size: 10px; color: oklch(0.52 0.13 40); margin-top: 14px;">&larr; ask another</div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 22px; min-width: 0;">
+        <div style="font-size: 30px; line-height: 1.28; font-weight: 300; letter-spacing: -0.01em; color: oklch(0.22 0.015 60); text-wrap: pretty;">{{ q.question }}</div>
+        <div style="font-size: 17px; line-height: 1.7; color: oklch(0.32 0.015 60); max-width: 58ch;">{{ q.lead }}</div>
+
+        <div style="display: flex; flex-direction: column; gap: 0; border-top: 1px solid oklch(0.90 0.012 60);">
+          <sc-for list="{{ q.items }}" as="it" hint-placeholder-count="3">
+            <div class="src" onMouseEnter="{{ it.enter }}" onMouseLeave="{{ it.leave }}" style="display: flex; align-items: baseline; gap: 14px; padding: 9px 0; border-bottom: 1px solid oklch(0.92 0.012 60); background: {{ it.rowBg }};">
+              <div style="font-family: 'Public Sans', sans-serif; font-size: 9px; font-weight: 600; color: {{ it.numFill }}; width: 16px; flex-shrink: 0;">{{ it.n }}</div>
+              <div style="font-size: 15px; font-style: italic; color: {{ it.nameFill }}; flex-grow: 1;">{{ it.name }}</div>
+              <div style="font-family: 'Public Sans', sans-serif; font-size: 11px; color: {{ it.idFill }};">{{ it.arxiv }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ q.hasTail }}" hint-placeholder-val="{{ true }}">
+          <div style="font-size: 15px; line-height: 1.7; color: oklch(0.45 0.015 60); max-width: 58ch; font-style: italic;">{{ q.tail }}</div>
+        </sc-if>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 14px; border-left: 1px solid oklch(0.88 0.012 60); padding-left: 32px; padding-top: 8px;">
+        <div style="font-family: 'Public Sans', sans-serif; font-size: 9px; letter-spacing: 0.13em; text-transform: uppercase; color: oklch(0.60 0.012 60);">Figure 1</div>
+
+        <svg viewBox="{{ q.viewBox }}" style="width: 100%; height: auto;">
+          <sc-for list="{{ q.edges }}" as="e" hint-placeholder-count="3">
+            <line x1="{{ e.x1 }}" y1="{{ e.y1 }}" x2="{{ e.x2 }}" y2="{{ e.y2 }}" stroke="{{ e.stroke }}" stroke-width="{{ e.width }}"></line>
+          </sc-for>
+
+          <circle cx="{{ q.hubX }}" cy="{{ q.hubY }}" r="6" fill="oklch(0.52 0.13 40)"></circle>
+          <text x="{{ q.hubX }}" y="{{ q.hubLabelY }}" text-anchor="middle" font-family="Spectral, serif" font-size="13" font-style="italic" fill="oklch(0.24 0.015 60)">{{ q.hub }}</text>
+
+          <sc-for list="{{ q.nodes }}" as="n" hint-placeholder-count="3">
+            <circle cx="{{ n.cx }}" cy="{{ n.cy }}" r="{{ n.r }}" fill="{{ n.fill }}" stroke="{{ n.stroke }}" stroke-width="1.4"></circle>
+            <text x="{{ n.tx }}" y="{{ n.ty }}" font-family="Spectral, serif" font-size="{{ n.fs }}" fill="{{ n.labelFill }}">{{ n.name }}</text>
+          </sc-for>
+
+          <text x="{{ q.predX }}" y="{{ q.predY }}" font-family="'Public Sans', sans-serif" font-size="9" letter-spacing="0.1em" fill="oklch(0.58 0.012 60)">{{ q.predicate }}</text>
+        </svg>
+
+        <div style="font-family: 'Public Sans', sans-serif; font-size: 11px; line-height: 1.6; color: oklch(0.55 0.012 60);"><span style="font-weight: 600; color: oklch(0.40 0.015 60);">Fig. 1</span> &mdash; {{ q.caption }}</div>
+      </div>
+
+    </div>
+  </sc-if>
+
+  <div style="display: flex; align-items: center; justify-content: space-between; padding: 20px 56px 26px; font-family: 'Public Sans', sans-serif; font-size: 10px; letter-spacing: 0.06em; color: oklch(0.62 0.012 60); flex-shrink: 0;">
+    <div>Snapshot 2026-08-16T04-37-21Z</div>
+    <div>{{ footRight }}</div>
+  </div>
+
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+const RUST = 'oklch(0.52 0.13 40)';
+const INK = 'oklch(0.28 0.015 60)';
+const MUTED = 'oklch(0.60 0.012 60)';
+const HAIR = 'oklch(0.74 0.02 60)';
+
+const QUERIES = {
+  ltn: {
+    question: 'What builds on Logic Tensor Networks?',
+    intent: 'Lineage',
+    resolved: 'one entity resolved, none ambiguous',
+    hub: 'Logic Tensor Networks',
+    predicate: 'EXTENDS',
+    lead: 'Based on the supplied facts, three works build on Logic Tensor Networks:',
+    tail: 'The graph does not provide further details on how each extends the original framework.',
+    caption: 'every EXTENDS edge terminating at Logic Tensor Networks — three of the 33 such edges in the corpus.',
+    foot: 'Traversal 18 ms · Answer 1.9 s',
+    items: [
+      { name: 'Iterative Logic Tensor Network', arxiv: '2604.26521' },
+      { name: 'FOT-LTN', arxiv: '2606.29972' },
+      { name: 'sLTN', arxiv: '2608.11136' }
+    ]
+  },
+  hallucination: {
+    question: 'What addresses hallucination?',
+    intent: 'Neighbourhood',
+    resolved: 'one entity resolved, none ambiguous',
+    hub: 'hallucination',
+    predicate: 'ADDRESSES',
+    lead: 'According to the graph, the following methods address hallucination:',
+    tail: '',
+    caption: 'every ADDRESSES edge terminating at hallucination — eleven of the 480 such edges in the corpus.',
+    foot: 'Traversal 24 ms · Answer 2.4 s',
+    items: [
+      { name: 'RAG', arxiv: '2601.04568' },
+      { name: 'VeNRA', arxiv: '2603.04663' },
+      { name: 'CORE-Acu', arxiv: '2603.08321' },
+      { name: 'OMNIFLOW', arxiv: '2603.15797' },
+      { name: 'GraphRAG', arxiv: '2603.19276' },
+      { name: 'SafePilot', arxiv: '2603.21523' },
+      { name: 'DUPLEX', arxiv: '2603.23909' },
+      { name: 'Foundation AgenticOS', arxiv: '2604.00555' },
+      { name: 'CircuitSynth', arxiv: '2604.10114' },
+      { name: 'hybrid verification architecture', arxiv: '2605.26942' },
+      { name: 'TRISM', arxiv: '2606.15646' }
+    ]
+  }
+};
+
+class Component extends DCLogic {
+  renderVals() {
+    const st = this.state || {};
+    const key = st.key || null;
+    const hi = st.hi === undefined ? null : st.hi;
+
+    const samples = [
+      { question: QUERIES.ltn.question, meta: '3 facts · lineage', pick: () => this.setState({ key: 'ltn', hi: null }) },
+      { question: QUERIES.hallucination.question, meta: '11 facts · neighbourhood', pick: () => this.setState({ key: 'hallucination', hi: null }) }
+    ];
+
+    if (!key) {
+      return { isEmpty: true, isAnswered: false, samples, footRight: 'Two questions wired · click one', q: {}, reset: () => {} };
+    }
+
+    const src = QUERIES[key];
+    const n = src.items.length;
+    const wide = n > 4;
+    const spacing = wide ? 30 : 58;
+    const fs = wide ? 11.5 : 14;
+    const h = Math.max(240, n * spacing + 80);
+    const cy = h / 2;
+    const startY = cy - ((n - 1) * spacing) / 2;
+    const hubX = 64;
+    const nodeX = 176;
+
+    const items = src.items.map((it, i) => {
+      const on = hi === i;
+      return {
+        n: String(i + 1),
+        name: it.name,
+        arxiv: it.arxiv,
+        rowBg: on ? 'oklch(0.955 0.014 60)' : 'transparent',
+        numFill: on ? RUST : 'oklch(0.70 0.012 60)',
+        nameFill: on ? 'oklch(0.18 0.015 60)' : INK,
+        idFill: on ? RUST : MUTED,
+        enter: () => this.setState({ hi: i }),
+        leave: () => this.setState({ hi: null })
+      };
+    });
+
+    const edges = src.items.map((it, i) => {
+      const on = hi === i;
+      return {
+        x1: hubX, y1: cy, x2: nodeX, y2: startY + i * spacing,
+        stroke: on ? RUST : HAIR,
+        width: on ? 2 : 1
+      };
+    });
+
+    const nodes = src.items.map((it, i) => {
+      const on = hi === i;
+      const y = startY + i * spacing;
+      return {
+        cx: nodeX, cy: y, r: on ? 5 : 4,
+        fill: on ? RUST : 'none',
+        stroke: on ? RUST : 'oklch(0.50 0.015 60)',
+        tx: nodeX + 16, ty: y + 4, fs: fs,
+        name: it.name,
+        labelFill: on ? 'oklch(0.18 0.015 60)' : 'oklch(0.34 0.015 60)'
+      };
+    });
+
+    return {
+      isEmpty: false,
+      isAnswered: true,
+      samples,
+      reset: () => this.setState({ key: null, hi: null }),
+      footRight: src.foot,
+      q: {
+        question: src.question,
+        intent: src.intent,
+        resolved: src.resolved,
+        lead: src.lead,
+        tail: src.tail,
+        hasTail: src.tail.length > 0,
+        caption: src.caption,
+        hub: src.hub,
+        predicate: src.predicate,
+        viewBox: '0 0 460 ' + h,
+        hubX: hubX, hubY: cy, hubLabelY: cy + 26,
+        predX: 84, predY: cy - 14,
+        items, edges, nodes
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
