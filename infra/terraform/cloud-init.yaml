@@ -1,0 +1,18 @@
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+
+swap:
+  filename: /swapfile
+  size: 2147483648
+  maxsize: 2147483648
+
+runcmd:
+  - systemctl enable --now docker
+  - git clone --depth 1 https://github.com/NguyenTienDat377/arxiv-lens.git /opt/arxiv-lens
+  # graph-pipeline runs as uid 1000 and writes caches into the bind-mounted data/;
+  # Docker Desktop hides host permissions, a Linux host does not.
+  - chown -R 1000:1000 /opt/arxiv-lens/graph-pipeline/data

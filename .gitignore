@@ -670,3 +670,10 @@ k8s/*-secrets.yml
 graph-pipeline/mlflow.db
 graph-pipeline/mlartifacts/
 graph-pipeline/mlruns/
+
+CLAUDE.md
+
+infra/terraform/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars

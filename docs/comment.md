@@ -718,6 +718,142 @@ scattered.
 
 ---
 
+# Evaluation
+
+## `eval/golden.json` — the ground truth
+
+18 cases: 12 positives and 6 negatives. This is the only artefact in the project that
+measures whether an answer is *correct* rather than merely stable, so its construction
+matters more than the harness that reads it.
+
+### Ground truth comes from the abstracts, never from the graph
+
+Every case carries a `ground_truth` field recording what the paper actually claims:
+
+```json
+"ground_truth": "Each abstract states an extension of LTN: sLTN 'an extension of LTN',
+FOT-LTN 'an extension of Logic Tensor Networks'. LTN-GAN (2601.03839) is excluded: it
+incorporates LTNs rather than extending them."
+```
+
+> Deriving expectations by querying the graph would make the eval **circular** — it would
+> pass by construction and tell you nothing. The field exists so that a future edit can be
+> checked against the paper rather than against the system under test.
+
+Two of the entries deliberately disagree with the graph. `Chain-of-Thought` is excluded
+from "what tackles logical reasoning" even though that edge exists, because 2601.10101 says
+CoT *falls short* on logical reasoning and MatrixCoT is the contribution. If an edge is
+wrong, the eval must not bless it.
+
+### Two entity fields, not one
+
+`entities` is what the question is *about*; `expect_entities` is what the answer must
+*contain*. Collapsing them was a real bug: offline mode fed `expect_entities` in as the
+traversal's starting point, so `LINEAGE` asked "what extends sLTN?" rather than "what
+extends LTN?" and every case returned zero facts while reporting a correct intent.
+
+### Negatives need `expect_empty: true`
+
+An empty `expect_entities` scores 100% recall vacuously — `len([]) / len([])` is guarded to
+return 1.0 — so a negative case without the flag passes no matter what comes back, including
+garbage. The flag switches the criterion from recall to `facts == 0`.
+
+The six negatives are the interesting half. `NeurASP ↔ ARTEMIS` is the sharpest: both are
+neuro-symbolic frameworks, semantically close enough that any similarity search relates them,
+and the correct answer is that no paper asserts a connection.
+
+---
+
+## `eval/run_eval.py` — the harness
+
+### `--offline` separates retrieval from planning
+
+Offline mode skips `plan()` and uses each case's declared intent. Two reasons, both load-bearing:
+
+| | offline | online |
+|---|---|---|
+| API cost | zero | one call per case |
+| answers | *do the traversals find the right facts?* | *and does the planner pick the right traversal?* |
+
+When a case fails you know which half broke, and the graph half can be iterated on for free.
+It also means the harness runs in CI without credentials.
+
+### Per-case pass rate, not just means
+
+The first version gated on mean recall alone, and **passed with two deliberately injected
+errors**: across 18 cases one wholly-wrong case only drags the mean to the threshold. Averages
+hide single failures, and worse as the set grows.
+
+So each case is scored on its own (`Result.passed`) and the gate is the share of cases that
+clear both bars. The same broken set then blocks correctly, naming the failing questions.
+
+> A gate that has never been seen to fail is not known to work. Both harnesses here were
+> checked against a deliberately corrupted copy of their input before being trusted.
+
+### Means exclude negatives
+
+`positives = [r for r in results if not r.expect_empty]`. Averaging a negative's meaningless
+100% into the recall figure would inflate it, in exactly the way `expect_empty` exists to prevent.
+
+### `sys.exit(1)` is the whole point
+
+It is what makes this a gate rather than a report: `run_eval && build_graph` refuses to promote.
+
+---
+
+## `eval/compare.py` — graph against the vector baseline
+
+### `recall()` returns `None`, not `1.0`, for an empty expectation
+
+The same trap once more, in the comparison. `None` drops the case from the mean rather than
+contributing a free 100%.
+
+### Both systems are reduced to a set of paper ids
+
+The graph produces the papers cited by its traversal's edges; the vector baseline produces the
+arXiv ids of its top-k. Same shape, same expected list, so the comparison is genuinely
+like-for-like rather than two different metrics placed side by side.
+
+### The negatives are reported as counts, not scored
+
+```
+graph  vector   question
+    0       5   Euclid-MCP ↔ LiFTER
+    0       5   NeurASP ↔ ARTEMIS
+```
+
+There is no fair score to compute, because **top-k always returns k**. The asymmetry is the
+finding, not a number to be averaged.
+
+### What the headline figure is and is not
+
+Graph 100%, vector 61% on paper recall over 11 answerable questions. Both caveats belong
+alongside it:
+
+- The questions were written knowing the ontology, so they favour graph-shaped queries.
+- The `expect_papers` lists are incomplete. Asked what addresses hallucination, the baseline
+  returned 2605.26942 — a paper the graph *also* records as addressing hallucination — and
+  scored 0%, because the gold list named only two of the eleven valid answers.
+
+So the number is directional, not a benchmark. The claims that survive scrutiny are the two
+that are structural rather than scored:
+
+**Rare proper nouns.** "What datasets was Moose evaluated on?" retrieves papers *about
+datasets* — top score 0.239, the Moose paper nowhere. The embedding has no notion that
+"Moose" names a system, so the query is dominated by "datasets" and "evaluated". Exact entity
+lookup is a different mechanism, not a better-tuned one.
+
+**Absence.** Covered above and in the `vector_rag.py` notes.
+
+### The honest cost asymmetry
+
+Worth keeping next to the result: the baseline took an afternoon and 7 seconds of embedding.
+The graph took an ontology, 300 LLM extractions, a canonicalization stage and a repair pass.
+The defensible claim is not "graphs win" but "the graph buys multi-hop composition, exact
+entity lookup and the ability to return nothing — and here is what those cost."
+
+---
+
 ## Containerization
 
 ### The build context is the repository root, for both services
@@ -1031,6 +1167,40 @@ Request rate, p95 and heap are the same four panels any service gets. The cache 
 
 ---
 
+## `CacheConfig` / `QueryUseCase` — the Caffeine cache
+
+Two things are expensive about `ask()`: a Neo4j traversal, then Claude writing the answer. Asking the same question twice should not pay for the second one — that's the whole job of this cache.
+
+**In-process, not a server.** Caffeine lives inside the JVM's heap — a very sophisticated `ConcurrentHashMap`, not Redis. No network hop, no serialization. That buys speed and simplicity but comes with two consequences worth knowing before they surprise anyone: restart the service and the cache is empty (every rebuild today made the first question slow again, not a bug), and two replicas would mean two independent caches — fine at one instance, a real correctness problem the moment `k8s/`'s Deployment is scaled past one, since a `graph.updated` eviction on one pod wouldn't touch the other's.
+
+**Two layers on purpose.** `@Cacheable` is Spring's vocabulary; `CaffeineCacheManager` is what plugs Caffeine in behind it. Swapping the store for Redis later is one bean, not a rewrite of `QueryUseCase` — that's the whole reason the annotation says nothing about Caffeine.
+
+**The proxy has teeth.** `@Cacheable` works by Spring wrapping `QueryUseCase` in a proxy that intercepts the call before it reaches the real method. A call from *inside* the class — `this.ask(...)` calling `this.stats()` — bypasses the wrapper entirely and silently skips the cache; nothing errors, it just never hits. That is exactly why `GraphUpdatedListener` injects `CacheManager` and calls `cache.clear()` directly instead of reaching for `@CacheEvict`: an annotation fired from inside a Kafka listener, on the wrong side of the proxy, would do nothing and look fine doing it.
+
+**The key is the record's `equals`.** No `key = ...` was written, so Spring's default key is the method argument itself — for `ask(GraphQuery query)`, the key *is* the `GraphQuery`. That only works because it's declared as a `record`: records generate `equals()`/`hashCode()` from their components, so two separately-constructed `GraphQuery`s carrying the same question collide on the same entry. A plain class without that override would still compile, still run, and cache nothing — every call unequal to every other, hit ratio zero, no error anywhere to find it by.
+
+**`expireAfterWrite`, not `expireAfterAccess`.** The alternative resets the clock on every read, so a popular question would stay cached forever, growing more stale the more often it's asked — backwards, since staleness starts at the graph changing, not at the last read. Six hours is a backstop, not the real mechanism: the actual invalidation is `build_graph → graph.updated → GraphUpdatedListener.evict()`, immediate. The TTL only matters when that path fails — no Kafka broker reachable, which is exactly the CI runner's situation.
+
+**`.recordStats()` is opt-in and silent when missing.** Without it, `cache_gets_total` and `cache_evictions_total` publish as zero forever — not an error, a permanently plausible-looking wrong number. Lost an afternoon to this once: the Grafana panel read "0% hit ratio" when the honest state was "not instrumented," and the two look identical on a dashboard.
+
+---
+
+## `static/index.html` — the UI
+
+Same-origin by construction: served by `query-service` itself off `/`, calling `/api/stats` and `/api/query` as relative paths. That one decision removes an entire category of problems for free — no CORS configuration, no separate build step, no absolute API URL to keep in sync between environments, and it means the page works unmodified behind a tunnel (`cloudflared`, `ngrok`) with zero extra config, because the tunnel forwards to one origin and the browser never needs to know two hosts exist.
+
+**The answer is untrusted text going into `innerHTML`.** It's Claude's prose, not a template — so `renderAnswer()` escapes the whole string *before* reintroducing any markup (bold for entity names, links for arXiv ids). Escape-then-reintroduce, never the other order: tested by feeding it `<img src=x onerror=alert(1)>` alongside real markup and confirming the tag renders as inert text while the real bold and links still work.
+
+**The subgraph's centre is picked by degree, not by assuming intent.** `layout()` counts how many facts touch each entity and centres the one with the most — so the same rendering code draws a sensible figure whether the question was "what extends X" (X has the most edges) or "what addresses hallucination" (hallucination does), with no branch on `intent` anywhere in the drawing code.
+
+**The `viewBox` is padded left on purpose.** A label is centred on its node with `text-anchor: middle`, so a long entity name runs to the left of the node's x-coordinate — for a name like "hybrid verification architecture" as a hub, that's far enough to fall outside `x=0` and get clipped by SVG's default behavior, silently, with no console warning. Padding the `viewBox` by 84px on the left is cheap insurance against a label that happens to be long.
+
+**A cache hit needed its own timing format.** `(elapsed / 1000).toFixed(1)` reads fine for a 2-second Claude call and prints `"0.0 s"` for a 14ms cache hit — a real number, a bad presentation of it. Split the format on a 1-second threshold so a hit reads `"14 ms"` instead of a number that looks like an error.
+
+**The one interaction that matters is the hover.** Hovering a fact row highlights its edge and both endpoint nodes in the figure, and the reverse — that pairing is the whole thesis rendered as an interaction: the answer is not recalled, it is assembled from the edges sitting right there, traceable one at a time. Everything else on the page is presentation; that link is the argument.
+
+---
+
 ## Infrastructure gotchas
 
 - **Neo4j has two ports.** 7474 is the HTTP browser; **7687 is Bolt**, which drivers speak. `bolt://localhost:7687`, not the URL you log into.
@@ -1064,6 +1234,8 @@ So `data/extracted/` is committed: 448K of JSONL, 300 papers, two snapshots, and
 
 **The cron is committed but inert**, gated on a repository *variable* rather than a code change, so arming and disarming it is a settings-page action. A workflow that starts billing the moment it merges is not one to merge.
 
+**A batch outlives the process that submitted it, and `timeout-minutes: 90` doesn't know that.** A real 90-minute timeout killed a run mid-`await_batch`, and the batch — already submitted, already being billed — kept processing on Anthropic's side with nothing left watching it. Two things made it worse than it had to be: `submit_batch()`'s return value lives only in memory and in a `print()` that was never flushed (no `PYTHONUNBUFFERED`), so the killed run's log genuinely did not contain the one string — `submitted batch msgbatch_…` — that would let it be recovered by hand later; and the 90-minute figure was a guess dressed as a limit, against an API whose actual SLA is 24 hours. The batch was still recoverable (`collect_batch(batch_id, papers)` maps results by `custom_id` regardless of who's asking), but only because the id happened to be visible in the Anthropic console, not because the workflow made that easy. **Not yet fixed** — the honest shape is `PYTHONUNBUFFERED=1` in the job env, persisting the batch id to a file under `data/` *before* the await (so it survives the process that submitted it), and a `--collect <batch_id>` path that skips submission and resumes from a written id instead of re-paying.
+
 ---
 
 ## Next
@@ -1071,5 +1243,7 @@ So `data/extracted/` is committed: 448K of JSONL, 300 papers, two snapshots, and
 Everything on the request path is built and exercised end to end: ingest → extract → repair → canonicalize → drift gate → Neo4j → Z3, and REST → gRPC → traversal → cited answer, with `graph.updated` closing the loop back to cache eviction.
 
 The last operational gap is closed too: the pipeline runs on a gated schedule behind secrets, with a cost guard that fails loudly when its cache is gone and a drift gate that stops the build before the graph is touched.
+
+There's a real UI now — served by `query-service` itself, same-origin, no separate frontend to deploy — and a cost boundary worth restating precisely: `/api/stats` and the landing page are free (graph traversal only), `/api/query` is not (it calls Claude). That distinction mattered less while the API was local-only; it stopped being academic the moment the service sat behind a public tunnel URL, because every hit past that point is a real, unmetered Anthropic call from anyone who has the link. `/api/query` has no rate limiting yet — the honest next step, and a real one: a tunnel agent proxies over loopback, so a naive per-IP limiter reading `request.getRemoteAddr()` would see the same address for every visitor and either do nothing or throttle everyone as one. Reading `X-Forwarded-For` is the fix; a Caffeine-backed counter is enough of a mechanism, no new dependency.
 
 The standing gap is unchanged and worth restating: every gate here measures *stability*, and only the golden eval measures *correctness*. A consistently wrong graph still passes the drift gate, the Z3 checker and the embedding monitor. The eval is 18 questions; that is the number to grow.
