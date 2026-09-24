@@ -1,0 +1,21 @@
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+
+runcmd:
+  # Oracle's Ubuntu images ship an iptables policy that rejects everything but
+  # ssh, independent of the security list. Open the app port ahead of the final
+  # REJECT and persist it, or it disappears on reboot.
+  - iptables -I INPUT 6 -m state --state NEW -p tcp --dport 8082 -j ACCEPT
+  - netfilter-persistent save
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+  - git clone --depth 1 https://github.com/NguyenTienDat377/arxiv-lens.git /opt/arxiv-lens
+  # scp target for the raw snapshot build_graph needs; gitignored, so not cloned.
+  - mkdir -p /opt/arxiv-lens/graph-pipeline/data/raw
+  # graph-pipeline runs as uid 1000 and writes caches into the bind-mounted data/.
+  # On these images uid 1000 is the `ubuntu` user, which is also who deploys.
+  - chown -R 1000:1000 /opt/arxiv-lens
