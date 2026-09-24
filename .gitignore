@@ -674,6 +674,7 @@ graph-pipeline/mlruns/
 CLAUDE.md
 
 infra/terraform/.terraform/
+infra/terraform-oci/.terraform/
 *.tfstate
 *.tfstate.backup
 *.tfvars
