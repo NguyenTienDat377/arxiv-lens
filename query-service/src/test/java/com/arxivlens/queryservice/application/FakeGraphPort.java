@@ -19,6 +19,7 @@ import com.arxivlens.queryservice.domain.ResultStatus;
 public class FakeGraphPort implements GraphPort {
 
     private final AtomicInteger queryCalls = new AtomicInteger();
+    private final AtomicInteger statsCalls = new AtomicInteger();
 
     @Override
     public QueryResult query(GraphQuery query) {
@@ -36,11 +37,16 @@ public class FakeGraphPort implements GraphPort {
 
     @Override
     public GraphStats graphStats() {
+        statsCalls.incrementAndGet();
         return new GraphStats("2026-08-16T04-37-21Z", 300, 1742, 1244,
                 Map.of("Method", 614), Map.of("EXTENDS", 33));
     }
 
     public int queryCalls() {
         return queryCalls.get();
+    }
+
+    public int statsCalls() {
+        return statsCalls.get();
     }
 }

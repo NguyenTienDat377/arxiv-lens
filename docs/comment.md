@@ -1185,6 +1185,33 @@ Two things are expensive about `ask()`: a Neo4j traversal, then Claude writing t
 
 ---
 
+## `TwoTierCache` — Caffeine in front, Redis behind *(designed, not yet built)*
+
+**Why a second tier at all.** Redis is in memory too; the difference is *whose* memory. It is a separate process, so a query-service restart — every deploy, every `compose up --build` — no longer empties the cache, and N replicas share one copy instead of each paying Anthropic for the same question. Losing a cache on restart is by design, so that alone never justified the change; *more than one replica* is the trigger. Caffeine stays in front because a heap hit is nanoseconds and a Redis hit is a network round trip, and most repeated questions are repeated on the same pod.
+
+**The real problem is invalidating L1, not adding L2.** ⚠️ `application.yml` gives every replica `group-id: query-service`, and Kafka delivers each message to *one* member of a group. At one replica that's invisible. At three, one pod clears its L1 and Redis while the other two go on serving pre-rebuild answers from their own heaps — Redis fixes none of it, because L1 is still per-pod. The group id becomes per-pod (`query-service-${HOSTNAME}-${random.uuid}`), which turns the topic from a work queue into a broadcast: every pod clears its own L1 and also clears Redis, and clearing Redis three times is harmless because `clear()` is idempotent. `auto-offset-reset: latest` is already the right setting — a pod that just started has an empty L1 and needs no history. The cost is one abandoned consumer group per restart, left for Kafka's offset retention to expire.
+
+Rejected: **Redis pub/sub** for the invalidation — a second messaging system beside one that already exists, and fire-and-forget, so a pod briefly disconnected simply misses it. **A short L1 TTL on its own** — simple, but stale for the whole TTL after every rebuild. The broadcast is the mechanism; a short L1 TTL (~10 min, against L2's 6 h) is the backstop for a pod that misses an event. Same fast-path-plus-guarantee shape as Kafka-plus-TTL today, applied once per tier.
+
+**It wraps two `Cache`s, not a `CaffeineCache` and a `RedisCache`.** `TwoTierCache implements Cache` and takes both tiers as the interface. That makes it testable with two `ConcurrentMapCache`s — every rule below, in milliseconds, no Redis and no Testcontainers — which is the same move as `GraphPort`: depend on the abstraction and the tests get cheap. `QueryUseCase` and `GraphUpdatedListener` don't change; `@Cacheable("queries")` never knew what was behind it, and `clear()` now means both tiers.
+
+**The rules, and the reason for each:**
+
+- **`get`: L1, then L2, and an L2 hit is copied into L1.** Without the copy, a freshly restarted pod goes to Redis on every request and L1 never warms.
+- **Clear L2 before L1.** ⚠️ The other order has a window where a request misses the just-cleared L1, hits the still-stale Redis, and copies the old answer straight back into L1 — undoing the eviction it raced.
+- **…and "first" has to mean finished.** ⚠️ `RedisCache.clear()` and `evict()` may run asynchronously — with Lettuce, `clear()` hands the delete to an async writer and returns before Redis has done anything. The ordering above then exists only in Java: a `redis-cli MONITOR` trace of `GraphUpdatedListenerTest` showed `KEYS queries::*`, then the test's `GET` hitting the still-present key and promoting it back into L1, then the `UNLINK` a millisecond too late — a stale answer pinned in L1 for its full TTL. L2 uses `invalidate()` and `evictIfPresent()`, the variants the `Cache` contract guarantees are immediate. The unit tests could not see this: `ConcurrentMapCache.clear()` is synchronous, so only the integration test against real Redis failed.
+- **Redis failing is a miss, not an error.** Caught inside `TwoTierCache`, not with Spring's `CacheErrorHandler`, because the handler treats the *whole* cache as failed and L1 would go down with it. Caught here, Redis down degrades to exactly today's Caffeine-only system — the failure mode is "the previous architecture," which is the best one available. A cache is an optimisation; it must never be the reason a request fails.
+
+**One typed serializer per cache, never the generic one.** Redis stores bytes, so `QueryResult` and `GraphStats` become JSON. The generic Jackson serializer writes a `@class` into every value and trusts it on the way back — polymorphic deserialization, the pattern behind Jackson's long CVE history — to solve a problem this system doesn't have: each cache holds exactly one type. A per-cache `RedisCacheConfiguration` with a typed serializer needs no type information in the payload at all.
+
+**The Redis key is the record's `toString()`.** Deterministic for a record, so it works — but it means renaming a `GraphQuery` component silently changes every key. The consequence is one full miss after that deploy, harmless, and worth knowing before it looks like a bug.
+
+**Three outcomes to measure, not two.** Keep `.recordStats()` on L1 (the warning above still applies), and add Micrometer counters for L2 hit and L2 miss inside `TwoTierCache`. The Grafana story becomes L1 hit / L2 hit / miss — and only the last one is an Anthropic call.
+
+**The buy option.** Redis 6+ client-side caching (RESP3 tracking; Lettuce supports it) is this exact design built in: the server tells each client when to drop its local copy. Written by hand here because it's about 80 lines and the invalidation reasoning is the part worth understanding; at real scale, that's the one to reach for.
+
+---
+
 ## `static/index.html` — the UI
 
 Same-origin by construction: served by `query-service` itself off `/`, calling `/api/stats` and `/api/query` as relative paths. That one decision removes an entire category of problems for free — no CORS configuration, no separate build step, no absolute API URL to keep in sync between environments, and it means the page works unmodified behind a tunnel (`cloudflared`, `ngrok`) with zero extra config, because the tunnel forwards to one origin and the browser never needs to know two hosts exist.

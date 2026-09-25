@@ -4,7 +4,7 @@ spring:
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9094}
     consumer:
-      group-id: query-service
+      group-id: query-service-${HOSTNAME:local}-${random.uuid}
       auto-offset-reset: latest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -13,6 +13,9 @@ spring:
       channel:
         graphrag:
           target: ${GRPC_TARGET:static://localhost:50051}
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
 
 server:
   port: 8082

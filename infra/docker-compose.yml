@@ -106,10 +106,13 @@ services:
     environment:
       GRPC_TARGET: static://graph-pipeline:50051
       KAFKA_BOOTSTRAP: kafka:9092
+      REDIS_URL: redis://redis:6379
     depends_on:
       kafka:
         condition: service_healthy
       graph-pipeline:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL",
@@ -146,6 +149,19 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--maxmemory", "256mb",  "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
 
 volumes:
   neo4j_data:

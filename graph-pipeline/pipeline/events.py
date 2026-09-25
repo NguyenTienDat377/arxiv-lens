@@ -15,7 +15,6 @@ def _producer() -> Producer:
         {
             "bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP", "localhost:9094"),
             "client.id": "graph-pipeline",
-            # Fail fast: a build must not hang for minutes because Kafka is down.
             "socket.timeout.ms": 5000,
             "message.timeout.ms": 8000,
         }
