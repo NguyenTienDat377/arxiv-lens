@@ -21,12 +21,12 @@ variable "tenancy_ocid" {
 # Going over it bills a Pay As You Go account and fails on an Always Free one.
 variable "ocpus" {
   type    = number
-  default = 2
+  default = 1
 }
 
 variable "memory_gb" {
   type    = number
-  default = 12
+  default = 6
 }
 
 variable "ssh_public_key_path" {

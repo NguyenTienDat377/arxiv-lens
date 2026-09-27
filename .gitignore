@@ -675,6 +675,7 @@ CLAUDE.md
 
 infra/terraform/.terraform/
 infra/terraform-oci/.terraform/
+infra/terraform-aws/.terraform/
 *.tfstate
 *.tfstate.backup
 *.tfvars

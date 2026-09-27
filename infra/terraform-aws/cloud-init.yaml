@@ -1,0 +1,22 @@
+#cloud-config
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - git
+
+# Headroom for the first image build, which peaks well above steady state.
+swap:
+  filename: /swapfile
+  size: 2147483648
+  maxsize: 2147483648
+
+runcmd:
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+  - git clone --depth 1 https://github.com/NguyenTienDat377/arxiv-lens.git /opt/arxiv-lens
+  # scp target for the raw snapshot build_graph needs; gitignored, so not cloned.
+  - mkdir -p /opt/arxiv-lens/graph-pipeline/data/raw
+  # graph-pipeline runs as uid 1000 and writes caches into the bind-mounted data/.
+  # On Ubuntu EC2 images uid 1000 is the `ubuntu` user, which is also who deploys.
+  - chown -R 1000:1000 /opt/arxiv-lens
