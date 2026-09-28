@@ -11,7 +11,7 @@ import graphrag_pb2 as pb
 import graphrag_pb2_grpc as pb_grpc
 
 from pipeline.build_graph import LABELS, _driver
-from pipeline.snapshots import list_extracted
+from pipeline.snapshots import latest_extracted
 from retrieval.graph_rag import QueryIntent, QueryPlan, answer, link, plan, traverse
 
 INTENT_PREFIX = "QUERY_INTENT_"
@@ -36,7 +36,7 @@ def _to_proto_relation(predicate: str) -> int:
 
 class GraphRagService(pb_grpc.GraphRagServiceServicer):
     def Query(self, request, context):
-        snapshot_id = request.snapshot_id or list_extracted()[-1]
+        snapshot_id = request.snapshot_id or latest_extracted() or ""
         intent = _from_proto_intent(request.intent)
         entities = list(request.entities)
 
@@ -117,7 +117,9 @@ class GraphRagService(pb_grpc.GraphRagServiceServicer):
             papers = session.run("MATCH (p:Paper) RETURN count(p) AS n").single()["n"]
 
         return pb.GraphStatsResponse(
-            snapshot_id=list_extracted()[-1],
+            # A fresh deployment has no snapshot yet; an empty graph is an
+            # answer, not an error.
+            snapshot_id=latest_extracted() or "",
             papers=papers,
             entities=sum(by_label.values()),
             relations=sum(by_type.values()),

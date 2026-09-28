@@ -49,7 +49,7 @@ spec:
         - name: graph-pipeline
           # Pinned to the short commit SHA CI tags each build with. `latest`
           # moves, and IfNotPresent would keep serving a node's stale copy of it.
-          image: ghcr.io/nguyentiendat377/arxiv-lens-graph-pipeline:bc96b95
+          image: ghcr.io/nguyentiendat377/arxiv-lens-graph-pipeline:766ddc3
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 50051

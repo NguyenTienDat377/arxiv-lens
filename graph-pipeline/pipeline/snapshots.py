@@ -138,6 +138,11 @@ def list_extracted(root: str = DEFAULT_EXTRACTED_ROOT) -> list[str]:
     )
 
 
+def latest_extracted(root: str = DEFAULT_EXTRACTED_ROOT) -> str | None:
+    snapshots = list_extracted(root)
+    return snapshots[-1] if snapshots else None
+
+
 def load_extraction_index(
     root: str = DEFAULT_EXTRACTED_ROOT,
 ) -> dict[tuple[str, int], PaperExtraction]:

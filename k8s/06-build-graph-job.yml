@@ -22,7 +22,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: build-graph
-          image: ghcr.io/nguyentiendat377/arxiv-lens-graph-pipeline:bc96b95
+          image: ghcr.io/nguyentiendat377/arxiv-lens-graph-pipeline:766ddc3
           imagePullPolicy: IfNotPresent
           command: ["python", "-m", "pipeline.build_graph"]
           env:

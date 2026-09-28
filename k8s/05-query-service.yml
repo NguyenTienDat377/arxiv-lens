@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: query-service
-          image: ghcr.io/nguyentiendat377/arxiv-lens-query-service:bc96b95
+          image: ghcr.io/nguyentiendat377/arxiv-lens-query-service:766ddc3
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8082
