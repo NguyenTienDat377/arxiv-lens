@@ -733,6 +733,50 @@ compose file, falling back to `neo4j`/`password`. Either create `infra/.env` wit
 two values or pass `--env-file`; don't point it at `graph-pipeline/.env`, which also
 holds the Anthropic key and has no business inside a database container.
 
+### Deploying to AWS
+
+Two independent setups, both under `infra/`, both Terraform. Full detail — costs,
+troubleshooting, teardown — lives in each one's own README; this is the shape of each.
+
+**EC2 — an always-available demo host** (`infra/terraform-aws/`)
+
+One Graviton VM running the same Compose stack as above, with an Elastic IP so its
+URL stays fixed across a stop/start and a budget alarm that measures spend before
+credits are applied. Meant to be **stopped between demos**, not left running:
+
+```bash
+cd infra/terraform-aws
+terraform init && terraform apply
+$(terraform output -raw ssh)             # on the VM: clone is already there via cloud-init
+# fill graph-pipeline/.env and infra/.env, then:
+docker compose --profile app up -d --build
+```
+
+The graph is loaded the same way as the manual-Docker path above, `scp`'d up from
+the raw snapshot and built with `pipeline.build_graph`. See
+[`infra/terraform-aws/README.md`](infra/terraform-aws/README.md) for the full walkthrough.
+
+**EKS — a disposable Kubernetes lab** (`infra/terraform-eks/`)
+
+A real cluster — VPC, control plane, one node, the EBS CSI driver wired through
+IRSA — built to run `k8s/` unmodified and then be torn down. The EKS control plane
+has no stop button and bills by the hour, so this is create → use → `destroy`, not
+create-once:
+
+```bash
+cd infra/terraform-eks
+terraform init && terraform apply        # ~15-20 min
+$(terraform output -raw kubeconfig)
+kubectl apply -f storageclass.yml        # EKS ships no default StorageClass
+kubectl apply -f k8s/                    # same manifests minikube uses
+```
+
+The `latest_extracted() or ""` guard in `retrieval/grpc_server.py` exists because of
+this environment: a fresh cluster's data volume starts empty, and an empty graph is
+meant to be an answer, not a crash. Full walkthrough, including the two EBS/IAM
+gotchas real block storage exposes that minikube never does, in
+[`infra/terraform-eks/README.md`](infra/terraform-eks/README.md).
+
 ---
 
 ## License

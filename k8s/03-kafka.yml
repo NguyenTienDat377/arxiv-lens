@@ -83,8 +83,11 @@ spec:
               value: "true"
             # The image defaults to /tmp/kraft-combined-logs, which would put the
             # log outside the volume mounted below — the same trap as compose.
+            # One level below the mount, not at its root: a freshly formatted
+            # EBS volume gets an ext4 lost+found directory there, and Kafka
+            # treats any entry that isn't a topic-partition folder as fatal.
             - name: KAFKA_LOG_DIRS
-              value: /var/lib/kafka/data
+              value: /var/lib/kafka/data/logs
             - name: KAFKA_HEAP_OPTS
               value: -Xmx512m -Xms256m
           volumeMounts:

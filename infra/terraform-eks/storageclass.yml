@@ -1,0 +1,17 @@
+# EKS ships no default StorageClass, and the manifests in k8s/ name none, so
+# without this every PVC stays Pending. Applied with kubectl after the cluster
+# exists, not from Terraform. EKS-only: minikube brings its own default.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+# An EBS volume lives in one availability zone; wait until the pod is scheduled
+# so the volume is created in the zone of the node that will mount it.
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete
+allowVolumeExpansion: true
