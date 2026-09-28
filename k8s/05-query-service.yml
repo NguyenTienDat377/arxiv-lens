@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
         - name: query-service
-          image: arxiv-lens-query-service:latest
+          image: ghcr.io/nguyentiendat377/arxiv-lens-query-service:bc96b95
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8082
@@ -43,6 +43,8 @@ spec:
               value: static://graph-pipeline:50051
             - name: KAFKA_BOOTSTRAP
               value: kafka:9092
+            - name: REDIS_URL
+              value: redis://redis:6379
           readinessProbe:
             # Spring Boot's actuator splits these for exactly this purpose:
             # readiness reports whether the app can serve, liveness whether it

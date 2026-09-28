@@ -47,10 +47,9 @@ spec:
         fsGroup: 1000
       containers:
         - name: graph-pipeline
-          image: arxiv-lens-graph-pipeline:latest
-          # Kubernetes defaults the `latest` tag to imagePullPolicy: Always, so
-          # without this it ignores the image loaded into the node and tries to
-          # pull from Docker Hub — ImagePullBackOff on an image that is present.
+          # Pinned to the short commit SHA CI tags each build with. `latest`
+          # moves, and IfNotPresent would keep serving a node's stale copy of it.
+          image: ghcr.io/nguyentiendat377/arxiv-lens-graph-pipeline:bc96b95
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 50051
