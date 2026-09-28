@@ -102,7 +102,10 @@ services:
     profiles: [app]
     restart: unless-stopped
     ports:
-      - "8082:8082"
+      # Bound to loopback: reachable from the VM itself (over ssh, or from
+      # another container on this network by service name) but not from the
+      # internet. Caddy is the only public entry point now; see below.
+      - "127.0.0.1:8082:8082"
     environment:
       GRPC_TARGET: static://graph-pipeline:50051
       KAFKA_BOOTSTRAP: kafka:9092
@@ -149,6 +152,29 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
+  # The only public entry point. Terminates TLS with an auto-renewed Let's
+  # Encrypt certificate and proxies to query-service over the compose
+  # network, which is why query-service no longer needs a public port.
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    profiles: [app]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The issued certificate lives here. Without this volume, a container
+      # recreate would re-request one from Let's Encrypt every time — cheap
+      # occasionally, but Let's Encrypt rate-limits repeated requests for the
+      # same domain, so a bad deploy loop would eventually start failing.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      query-service:
+        condition: service_healthy
+
   redis:
     image: redis:7-alpine
     container_name: redis
@@ -172,4 +198,8 @@ volumes:
     name: arxiv_lens_prometheus_data
   grafana_data:
     name: arxiv_lens_grafana_data
+  caddy_data:
+    name: arxiv_lens_caddy_data
+  caddy_config:
+    name: arxiv_lens_caddy_config
 

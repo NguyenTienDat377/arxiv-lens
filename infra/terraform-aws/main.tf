@@ -86,13 +86,28 @@ resource "aws_vpc_security_group_ingress_rule" "ssh" {
   to_port           = 22
 }
 
-resource "aws_vpc_security_group_ingress_rule" "app" {
+# query-service is no longer published directly (see docker-compose.yml) —
+# Caddy is the sole public entry point, terminating TLS and proxying to it
+# over the compose network. 80 has to stay open to the whole internet, not
+# just admin_cidr: Let's Encrypt's own servers connect to it to verify domain
+# ownership before issuing a certificate. Caddy redirects any plain :80
+# browser hit straight to :443; nothing insecure is actually served there.
+resource "aws_vpc_security_group_ingress_rule" "http" {
   security_group_id = aws_security_group.demo.id
-  description       = "query-service UI and API"
+  description       = "ACME challenge + redirect to https"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
-  from_port         = 8082
-  to_port           = 8082
+  from_port         = 80
+  to_port           = 80
+}
+
+resource "aws_vpc_security_group_ingress_rule" "https" {
+  security_group_id = aws_security_group.demo.id
+  description       = "query-service UI and API, via Caddy"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
 }
 
 resource "aws_vpc_security_group_egress_rule" "all" {

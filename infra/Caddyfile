@@ -1,0 +1,7 @@
+# Caddy sees this is a real domain, not localhost, and automatically requests
+# a Let's Encrypt certificate for it, renews it before expiry, and redirects
+# any plain-HTTP hit to HTTPS. None of that is configured explicitly below —
+# it's Caddy's default behaviour for any non-localhost site block.
+arxiv-lens-dat.duckdns.org {
+	reverse_proxy query-service:8082
+}
