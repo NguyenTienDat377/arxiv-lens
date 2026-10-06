@@ -27,6 +27,15 @@ variable "kubernetes_version" {
 
 # x86: matches either half of the multi-arch images, and t3 is the cheapest
 # 8 GB general-purpose type.
+# Leave unset when running as an admin. When running as arxiv-lens-deployer,
+# set it to `terraform output permissions_boundary_arn` from infra/terraform-iam:
+# that user is only allowed to create roles that carry this boundary, and
+# CreateRole is refused without it.
+variable "permissions_boundary_arn" {
+  type    = string
+  default = null
+}
+
 variable "node_instance_type" {
   type    = string
   default = "t3.large"

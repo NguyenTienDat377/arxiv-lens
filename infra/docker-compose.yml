@@ -152,28 +152,30 @@ services:
       - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
-  # The only public entry point. Terminates TLS with an auto-renewed Let's
-  # Encrypt certificate and proxies to query-service over the compose
-  # network, which is why query-service no longer needs a public port.
-  caddy:
-    image: caddy:2-alpine
-    container_name: caddy
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
     profiles: [app]
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # The issued certificate lives here. Without this volume, a container
-      # recreate would re-request one from Let's Encrypt every time — cheap
-      # occasionally, but Let's Encrypt rate-limits repeated requests for the
-      # same domain, so a bad deploy loop would eventually start failing.
-      - caddy_data:/data
-      - caddy_config:/config
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - certbot_www:/var/www/certbot:ro
+      - letsencrypt:/etc/letsencrypt:ro
     depends_on:
       query-service:
         condition: service_healthy
+
+  certbot:
+    image: certbot/certbot
+    container_name: certbot
+    profiles: [app]
+    volumes:
+      - certbot_www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+
 
   redis:
     image: redis:7-alpine
@@ -198,8 +200,9 @@ volumes:
     name: arxiv_lens_prometheus_data
   grafana_data:
     name: arxiv_lens_grafana_data
-  caddy_data:
-    name: arxiv_lens_caddy_data
-  caddy_config:
-    name: arxiv_lens_caddy_config
+  certbot_www:
+    name: arxiv_lens_certbot_www
+  letsencrypt:
+    name: arxiv_lens_letsencrypt
+
 

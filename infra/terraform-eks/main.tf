@@ -37,6 +37,7 @@ module "ebs_csi_irsa" {
 
   name                  = "${local.name}-ebs-csi"
   attach_ebs_csi_policy = true
+  permissions_boundary  = var.permissions_boundary_arn
 
   oidc_providers = {
     main = {
@@ -52,6 +53,10 @@ module "eks" {
 
   name               = local.name
   kubernetes_version = var.kubernetes_version
+
+  # Null under admin credentials; set to the boundary the arxiv-lens-deployer
+  # user is required to attach to every role it creates (see infra/terraform-iam).
+  iam_role_permissions_boundary = var.permissions_boundary_arn
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.public_subnets
@@ -85,8 +90,9 @@ module "eks" {
 
   eks_managed_node_groups = {
     default = {
-      ami_type       = "AL2023_x86_64_STANDARD"
-      instance_types = [var.node_instance_type]
+      ami_type                      = "AL2023_x86_64_STANDARD"
+      iam_role_permissions_boundary = var.permissions_boundary_arn
+      instance_types                = [var.node_instance_type]
 
       min_size     = 1
       max_size     = 1
