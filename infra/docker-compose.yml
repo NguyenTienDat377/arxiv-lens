@@ -164,6 +164,9 @@ services:
       - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - certbot_www:/var/www/certbot:ro
       - letsencrypt:/etc/letsencrypt:ro
+    # nginx only reads certificates at startup or reload, so a renewed one is
+    # not served until the next reload; reloading every 6h picks it up.
+    command: ["/bin/sh", "-c", "while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec nginx -g 'daemon off;'"]
     depends_on:
       query-service:
         condition: service_healthy
@@ -176,6 +179,15 @@ services:
       - certbot_www:/var/www/certbot
       - letsencrypt:/etc/letsencrypt
 
+  certbot-renew:
+    image: certbot/certbot
+    container_name: certbot-renew
+    profiles: [app]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done"]
+    volumes:
+      - certbot_www:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
 
   redis:
     image: redis:7-alpine
