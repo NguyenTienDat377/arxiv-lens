@@ -59,6 +59,9 @@ services:
   # starts infrastructure only and the host dev loop is unchanged. The full
   # containerised stack is `docker compose --profile app up --build`.
   graph-pipeline:
+    # TAG unset = a local build tagged :local; scripts/deploy.sh sets it to a
+    # commit SHA and pulls the image CI built and tested for that commit.
+    image: ghcr.io/nguyentiendat377/arxiv-lens-graph-pipeline:${TAG:-local}
     build:
       # The repo root, because the build needs proto/ as well as the service.
       context: ..
@@ -95,6 +98,7 @@ services:
       start_period: 20s
 
   query-service:
+    image: ghcr.io/nguyentiendat377/arxiv-lens-query-service:${TAG:-local}
     build:
       context: ..
       dockerfile: query-service/Dockerfile
@@ -161,7 +165,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # The directory, not the file: a single-file bind mount stays pinned to
+      # the file git replaced, so a reload after a pull would read the old one.
+      - ./nginx:/etc/nginx/conf.d:ro
       - certbot_www:/var/www/certbot:ro
       - letsencrypt:/etc/letsencrypt:ro
     # nginx only reads certificates at startup or reload, so a renewed one is

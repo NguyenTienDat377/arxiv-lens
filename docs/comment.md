@@ -1342,6 +1342,33 @@ Everything above was config that was wrong on the page. These were config that w
 
 ---
 
+## Continuous deployment — the host pulls
+
+**Why pull instead of push.** The usual company setup is push: a CI job deploys to the server. Here that would mean either SSH, with port 22 opened to GitHub's thousands of runner IP ranges (undoing `admin_cidr`), or AWS SSM with a GitHub OIDC role, which needs the `terraform-iam` deployer widened past its EKS-only `PassRole` and OIDC fences. Both also have to cope with an instance that is **stopped most of the time**, where a push finds nothing to talk to. Pull avoids all three problems: a systemd timer on the host asks "is there something newer?" every 2 minutes and once at boot. It needs no inbound port, no AWS credentials in GitHub, and no IAM changes, and a stopped instance catches up the moment it starts. This is the same model as Argo CD and Flux (GitOps). The cost is that GitHub can't show whether a deploy worked; that lives in `journalctl -u arxiv-lens-deploy`.
+
+**Build once, deploy that artifact.** Before this, `dc up -d --build` rebuilt the images *on the server*, so what ran in production was a second build of the source, not the image CI tested. Now compose has `image: ghcr.io/…:${TAG:-local}` next to `build:`, and the script sets `TAG` to the commit SHA and runs `up --no-build`. Rollback is the same command with the previous SHA, and it takes seconds because nothing is rebuilt.
+
+**"An image exists for this SHA" is the quality gate.** `ci.yml` only builds images after both test jobs pass, so the script doesn't need its own notion of "green." It checks both services' images with `docker manifest inspect`. Missing means CI is still running or failed, so it waits for the next tick. A commit pushed while the instance is off is simply picked up at boot.
+
+**What `deploy.sh` does, and why each step:**
+- `flock`: the timer and a manual run can't deploy over each other.
+- Compare `origin/main` with the tag of the *running* `query-service` image, not with `git HEAD`. The container is the truth about what's live, and on the first run the host's stack was built locally and has no SHA tag at all.
+- `git checkout --detach <sha>` so `docker-compose.yml` and `default.conf` match the images being deployed. This is why the host's checkout is a detached HEAD and must not be `git pull`ed by hand.
+- `compose run --rm nginx nginx -t` before anything restarts: a broken config would otherwise crash-loop the only public entry point.
+- `up --wait --wait-timeout 300` on **named** services. `--wait` turns the existing healthchecks into the deploy's pass/fail. Named, because `certbot` is a one-shot service in the same profile, and a bare `--wait` reports its normal exit as a failed deploy.
+- On failure: check out the previous commit, bring back the previous tag, and write the failed SHA to `/var/tmp/arxiv-lens-failed-sha` so the timer doesn't retry it every two minutes. The next commit clears it.
+- `nginx -s reload` after success, since a changed `default.conf` doesn't recreate the container; then prune images older than a week, because each `graph-pipeline` image carries CPU torch and a 40 GB disk fills fast.
+
+**Two bugs found before they shipped:**
+- **The single-file nginx mount** *(Claude)*. `./nginx/default.conf:/etc/nginx/conf.d/default.conf` pins the container to the file's inode. `git checkout` writes a new file rather than editing in place, so `nginx -s reload` would have kept serving the old config forever. The mount is now the directory.
+- **Rollback mislabelled the old code** *(Claude, caught by the stub test)*. A failed *first* deploy has no registry image to go back to, so it rebuilds, but `TAG` was still exported as the failed SHA. The old code would have been tagged with the new SHA, and the next tick would have read "running = target" and stopped trying. It now rebuilds as `TAG=local`.
+
+**How it was tested without a server:** shellcheck, `compose config --images` with and without `TAG`, and a stub harness that puts fake `git`, `docker` and `flock` first on `PATH` and drives six cases: already current, CI not done, happy path, unhealthy → rollback, failed SHA not retried, and first deploy failing. The stub logs every call, so each case is checked by which commands ran, with which `TAG`.
+
+**Not covered:** the first real run on the host, and `nginx -t` against the real certificates. Locally the `letsencrypt` volume is empty.
+
+---
+
 ## Next
 
 Everything on the request path is built and exercised end to end: ingest → extract → repair → canonicalize → drift gate → Neo4j → Z3, and REST → gRPC → traversal → cited answer, with `graph.updated` closing the loop back to cache eviction.
