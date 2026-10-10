@@ -7,213 +7,219 @@
 <meta name="description" content="A GraphRAG system over 300 arXiv papers on neuro-symbolic AI. Answers by traversing an ontology-checked knowledge graph, with a citation behind every fact.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Public+Sans:wght@400;500;600&display=swap">
 <style>
   :root {
-    --bg: #0F1412;
-    --band: #131917;
-    --surface: #161D1A;
-    --rule: #26302C;
-    --line: #2E3A35;
-    --ink: #E8EDE9;
-    --soft: #B9C5BF;
-    --muted: #9AA8A1;
-    --accent: #7FD1AE;
-    --warn: #F2B36B;
-    --display: 'Bricolage Grotesque', 'IBM Plex Sans', sans-serif;
-    --sans: 'IBM Plex Sans', system-ui, sans-serif;
-    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    --bg: oklch(0.977 0.008 85);
+    --ink: oklch(0.26 0.015 60);
+    --ink-strong: oklch(0.18 0.015 60);
+    --head: oklch(0.22 0.015 60);
+    --body: oklch(0.38 0.015 60);
+    --muted: oklch(0.52 0.012 60);
+    --faint: oklch(0.70 0.012 60);
+    --rule: oklch(0.88 0.012 60);
+    --accent: oklch(0.52 0.13 40);
+    --accent-soft: oklch(0.82 0.06 40);
+    --row-hover: oklch(0.955 0.014 60);
+    --serif: Spectral, Georgia, 'Times New Roman', serif;
+    --sans: 'Public Sans', system-ui, -apple-system, sans-serif;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 17px; line-height: 1.6; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--serif); -webkit-font-smoothing: antialiased; }
   h1, h2, h3, p { margin: 0; text-wrap: pretty; }
-  a { color: var(--accent); }
-  a:hover { color: #B4EBD2; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid var(--accent-soft); }
+  a:hover { color: oklch(0.42 0.13 40); border-bottom-color: var(--accent); }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .wrap { max-width: 1200px; margin: 0 auto; padding-left: 24px; padding-right: 24px; }
-  .eyebrow { font-family: var(--mono); font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
-  .btn { display: inline-flex; align-items: center; min-height: 48px; padding: 0 22px; background: var(--accent); color: var(--bg); border: 0; border-radius: 10px; font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
-  .btn:hover { color: var(--bg); background: #9BDDC0; }
-  .card { padding: 28px; background: var(--surface); border: 1px solid var(--rule); border-radius: 14px; display: flex; flex-direction: column; gap: 12px; }
-  .card p, .card span { color: var(--soft); font-size: 16px; }
-  .tag { font-family: var(--mono); font-size: 13px; color: var(--accent); }
-  .tag.warn { color: var(--warn); }
-  .grid { display: grid; gap: 56px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); }
-  h2 { font-family: var(--display); font-weight: 700; font-size: clamp(34px, 3.8vw, 50px); line-height: 1.08; letter-spacing: -0.02em; }
-  .cite { font-family: var(--mono); font-size: 13px; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding-left: 56px; padding-right: 56px; }
+  .label { font-family: var(--sans); font-size: 11px; letter-spacing: 0.13em; text-transform: uppercase; color: var(--muted); }
+  .label.accent { color: var(--accent); }
+  h2 { font-weight: 300; font-size: clamp(30px, 3.4vw, 40px); line-height: 1.2; letter-spacing: -0.015em; color: var(--head); }
   .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .btn { display: inline-flex; align-items: center; min-height: 46px; padding: 0 22px; border: 0; background: var(--accent); color: var(--bg); font-family: var(--sans); font-size: 12px; font-weight: 500; letter-spacing: 0.11em; text-transform: uppercase; }
+  .btn:hover { background: oklch(0.44 0.13 40); color: var(--bg); }
 
-  .hero-bg { background-image: radial-gradient(var(--rule) 1px, transparent 1px); background-size: 24px 24px; }
-  header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding-top: 24px; padding-bottom: 24px; }
-  .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font-family: var(--mono); font-weight: 500; }
-  nav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-  nav a:not(.btn) { color: var(--soft); text-decoration: none; padding: 10px 12px; font-size: 15px; }
-  nav .btn { min-height: 44px; padding: 0 16px; margin-left: 8px; font-size: 15px; border-radius: 8px; }
-  .hero { padding-top: 64px; padding-bottom: 104px; align-items: center; }
-  .hero-copy { display: flex; flex-direction: column; gap: 28px; }
-  h1 { font-family: var(--display); font-weight: 700; font-size: clamp(44px, 5.6vw, 76px); line-height: 1; letter-spacing: -0.03em; }
-  h1 span { color: var(--accent); }
-  .lede { max-width: 34em; color: var(--soft); font-size: 19px; }
-  .ask { display: flex; flex-wrap: wrap; gap: 10px; max-width: 560px; }
-  .ask input { flex: 1 1 280px; min-width: 0; height: 52px; padding: 0 16px; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; font: inherit; font-size: 16px; }
-  .ask input::placeholder { color: #7C8A83; }
-  .ask .btn { height: 52px; }
+  header { border-bottom: 1px solid var(--rule); }
+  header .wrap { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 16px 24px; padding-top: 26px; padding-bottom: 18px; }
+  .mark { font-size: 17px; font-weight: 600; letter-spacing: 0.02em; color: var(--ink); border: 0; }
+  .mark span { color: var(--accent); }
+  nav { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 24px; font-family: var(--sans); font-size: 11px; letter-spacing: 0.11em; text-transform: uppercase; }
+  nav a { color: var(--muted); border: 0; padding: 12px 0; }
+  nav a.go { color: var(--accent); }
 
-  figure { margin: 0; background: var(--surface); border: 1px solid var(--rule); border-radius: 16px; overflow: hidden; }
-  .fig-head { padding: 14px 20px; border-bottom: 1px solid var(--rule); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 13px; color: var(--muted); }
-  .fig-graph { display: block; width: 100%; max-width: 400px; height: auto; margin: 0 auto; padding: 28px 16px; }
-  figcaption { padding: 18px 20px 22px; border-top: 1px solid var(--rule); font-size: 15px; color: var(--soft); display: flex; flex-direction: column; gap: 8px; }
-  figcaption strong { color: var(--ink); }
-  figcaption .aside { color: var(--muted); font-size: 14px; }
+  .hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 56px; align-items: center; padding-top: 72px; padding-bottom: 88px; }
+  .hero-copy { display: flex; flex-direction: column; gap: 30px; }
+  h1 { font-weight: 300; font-size: clamp(38px, 4.6vw, 56px); line-height: 1.12; letter-spacing: -0.015em; color: var(--head); }
+  h1 em { color: var(--accent); }
+  .lede { font-size: 18px; line-height: 1.7; color: var(--body); max-width: 50ch; }
+  form { display: flex; align-items: center; border-bottom: 1px solid oklch(0.60 0.015 60); max-width: 560px; }
+  form input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 12px 0; font-family: var(--serif); font-size: 19px; font-weight: 300; color: var(--ink-strong); }
+  form input:focus { outline: none; }
+  form input::placeholder { color: var(--faint); }
+  form button { border: 0; background: transparent; cursor: pointer; min-height: 44px; padding: 12px 0 12px 16px; font-family: var(--sans); font-size: 11px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--accent); }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 14px; border-left: 1px solid var(--rule); padding-left: 32px; }
+  .graph { width: 100%; max-width: 460px; height: auto; }
+  .edge { stroke: oklch(0.74 0.02 60); stroke-width: 1; }
+  .node { fill: none; stroke: oklch(0.50 0.015 60); stroke-width: 1.4; }
+  .node.hub { fill: var(--accent); stroke: var(--accent); }
+  .node-label { font-family: var(--serif); fill: oklch(0.34 0.015 60); font-size: 14px; }
+  .node-label.hub { fill: oklch(0.24 0.015 60); font-style: italic; font-size: 13px; }
+  figcaption { font-family: var(--sans); font-size: 12px; line-height: 1.6; color: var(--muted); }
+  figcaption b { font-weight: 600; color: oklch(0.40 0.015 60); }
+  .facts { display: flex; flex-direction: column; border-top: 1px solid var(--rule); }
+  .fact { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto; align-items: baseline; gap: 14px; padding: 10px 8px 10px 0; border-bottom: 1px solid oklch(0.92 0.012 60); }
+  .fact:hover { background: var(--row-hover); }
+  .fact .s, .fact .o { font-size: 15px; font-style: italic; color: var(--ink); }
+  .fact .p { font-family: var(--sans); font-size: 10px; letter-spacing: 0.1em; color: var(--muted); }
+  .fact a { font-family: var(--sans); font-size: 12px; }
+  .excluded { font-size: 15px; line-height: 1.6; color: var(--muted); font-style: italic; }
 
   .numbers { border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-  .numbers dl { margin: 0 auto; padding-top: 40px; padding-bottom: 40px; display: grid; gap: 32px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
-  .numbers div { display: flex; flex-direction: column-reverse; gap: 6px; }
-  .numbers dt { color: var(--muted); font-size: 15px; }
-  .numbers dd { margin: 0; font-family: var(--display); font-weight: 500; font-size: 48px; line-height: 1; letter-spacing: -0.02em; }
+  .numbers dl { margin: 0 auto; padding-top: 36px; padding-bottom: 36px; display: grid; gap: 28px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+  .numbers div { display: flex; flex-direction: column-reverse; gap: 8px; }
+  .numbers dd { margin: 0; font-weight: 300; font-size: 44px; line-height: 1; letter-spacing: -0.015em; color: var(--head); }
   .numbers dd.hi { color: var(--accent); }
 
-  section.how, section.close { padding-top: 112px; padding-bottom: 112px; }
-  .how { display: flex; flex-direction: column; gap: 48px; }
-  .how-head { display: flex; flex-direction: column; gap: 16px; max-width: 720px; }
-  .steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
-  .steps h3 { font-size: 20px; font-weight: 600; }
+  section.how, section.results, section.close { padding-top: 104px; padding-bottom: 104px; }
+  .how { display: flex; flex-direction: column; gap: 44px; }
+  .head { display: flex; flex-direction: column; gap: 16px; max-width: 680px; }
+  .steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 36px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); }
+  .steps li { display: flex; flex-direction: column; gap: 10px; padding-top: 18px; border-top: 1px solid var(--rule); }
+  .steps h3 { font-weight: 400; font-size: 21px; color: var(--ink-strong); }
+  .steps p { font-size: 16px; line-height: 1.7; color: var(--body); }
 
-  .results { background: var(--band); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); }
-  .results .grid { padding-top: 112px; padding-bottom: 112px; align-items: start; }
+  .results { border-top: 1px solid var(--rule); display: grid; gap: 56px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); align-items: start; }
   .results-copy { display: flex; flex-direction: column; gap: 20px; }
-  .results-copy > p { color: var(--soft); }
-  .bars { display: flex; flex-direction: column; gap: 18px; margin-top: 12px; }
-  .bar-head { display: flex; justify-content: space-between; font-size: 15px; margin-bottom: 6px; }
-  .bar-head span:last-child { font-family: var(--mono); }
-  .track { height: 12px; background: var(--rule); border-radius: 6px; }
-  .fill { height: 12px; background: var(--accent); border-radius: 6px; }
-  .fill.base { background: #7C8A83; }
-  .note { font-size: 14px; color: var(--muted); }
-  .outcomes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px; }
-  .outcomes .card { padding: 24px; gap: 8px; }
-  .outcomes code { font-family: var(--mono); font-size: 14px; color: var(--accent); }
-  .outcomes code.warn { color: var(--warn); }
-  .outcomes code.plain { color: var(--soft); }
+  .results-copy > p { font-size: 17px; line-height: 1.7; color: var(--body); max-width: 52ch; }
+  .bars { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+  .bar-head { display: flex; justify-content: space-between; font-family: var(--sans); font-size: 12px; color: var(--body); margin-bottom: 6px; }
+  .bar-head span:last-child { color: var(--muted); }
+  .bar { height: 3px; background: var(--accent); }
+  .bar.base { background: oklch(0.70 0.02 60); }
+  .note { font-family: var(--sans); font-size: 12px; line-height: 1.6; color: var(--muted); }
+  .outcomes { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+  .outcomes li { display: flex; flex-direction: column; gap: 6px; padding: 20px 0; border-bottom: 1px solid var(--rule); }
+  .outcomes code { font-family: var(--sans); font-size: 11px; letter-spacing: 0.1em; color: var(--accent); }
+  .outcomes code.plain { color: var(--muted); }
+  .outcomes span { font-size: 17px; line-height: 1.6; color: var(--body); font-style: italic; }
 
-  .close { display: flex; flex-direction: column; align-items: flex-start; gap: 24px; }
-  .close h2 { max-width: 18em; font-weight: 500; font-size: clamp(30px, 3.4vw, 44px); line-height: 1.15; }
-  .stack { color: var(--muted); font-family: var(--mono); font-size: 14px; }
-  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 20px; margin-top: 8px; }
-  .actions a:not(.btn) { display: inline-flex; align-items: center; min-height: 44px; }
+  .close { border-top: 1px solid var(--rule); display: flex; flex-direction: column; align-items: flex-start; gap: 22px; }
+  .close h2 { max-width: 22em; }
+  .stack { font-family: var(--sans); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; margin-top: 6px; }
+  .actions a:not(.btn) { font-size: 17px; }
 
   footer { border-top: 1px solid var(--rule); }
-  footer .wrap { padding-top: 28px; padding-bottom: 28px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--muted); }
-  footer .wrap span:last-child { font-family: var(--mono); }
+  footer .wrap { padding-top: 18px; padding-bottom: 26px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; font-family: var(--sans); font-size: 11px; letter-spacing: 0.06em; color: var(--muted); }
+
+  @media (max-width: 1040px) {
+    .wrap { padding-left: 24px; padding-right: 24px; }
+    figure { border-left: 0; padding-left: 0; border-top: 1px solid var(--rule); padding-top: 26px; }
+    .fact { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  }
 </style>
 </head>
 <body>
 
-<div class="hero-bg">
-  <header class="wrap">
-    <a class="brand" href="/">
-      <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="color: var(--accent)"><circle cx="12" cy="12" r="8"/><path d="M18 18l6 6"/><circle cx="9" cy="10" r="1.6" fill="currentColor"/><circle cx="15" cy="9" r="1.6" fill="currentColor"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/><path d="M9 10l6-1M9 10l3 5M15 9l-3 6"/></svg>
-      arxiv-lens
-    </a>
+<header>
+  <div class="wrap">
+    <a class="mark" href="/">arxiv<span>&thinsp;&middot;&thinsp;</span>lens</a>
     <nav aria-label="Primary">
       <a href="#how">How it works</a>
       <a href="#results">Results</a>
       <a href="https://github.com/NguyenTienDat377/arxiv-lens">GitHub</a>
-      <a class="btn" href="#ask">Ask the graph</a>
+      <a class="go" href="#ask">Ask the graph &rarr;</a>
     </nav>
-  </header>
+  </div>
+</header>
 
-  <section class="wrap grid hero">
+<main>
+  <section class="wrap hero">
     <div class="hero-copy">
-      <p class="eyebrow">GraphRAG · 300 arXiv papers · neuro-symbolic AI</p>
-      <h1>Ask what a field <span>builds on</span>, not what it mentions.</h1>
-      <p class="lede">arxiv-lens reads every abstract into an ontology-checked knowledge graph, then answers by traversing it. Every fact is cited to a paper — and when two ideas aren't connected, it says so.</p>
-      <form id="ask" class="ask" action="/app.html" method="get">
+      <p class="label accent">GraphRAG &middot; 300 arXiv papers &middot; neuro-symbolic AI</p>
+      <h1>Ask what a field <em>builds on</em>, not what it mentions.</h1>
+      <p class="lede">arxiv-lens reads every abstract into an ontology-checked knowledge graph, then answers by traversing it. Every fact is cited to a paper &mdash; and when two ideas aren't connected, it says so.</p>
+      <form id="ask" action="/app.html" method="get">
         <label for="q" class="sr-only">Question</label>
         <input id="q" name="q" type="text" autocomplete="off" placeholder="What builds on Logic Tensor Networks?">
-        <button class="btn" type="submit">Ask the graph</button>
+        <button type="submit">Ask</button>
       </form>
     </div>
 
     <figure>
-      <div class="fig-head"><span>intent: LINEAGE</span><span style="color: var(--accent)">STATUS_OK</span></div>
-      <svg class="fig-graph" viewBox="0 0 320 216" role="img" aria-label="sLTN, FOT-LTN and iLTN each extend Logic Tensor Networks">
-        <g stroke="#7FD1AE" stroke-width="2" fill="none" stroke-linecap="round">
-          <path d="M48 168V120M160 168V120M272 168V120M48 120H272M160 120V80"/>
-          <path d="M153 84L160 74L167 84Z" fill="#7FD1AE"/>
-        </g>
-        <text x="172" y="100" fill="#9AA8A1" font-family="IBM Plex Mono, monospace" font-size="12">EXTENDS</text>
-        <rect x="101" y="25" width="118" height="46" rx="10" fill="#0F1412" stroke="#7FD1AE" stroke-width="2"/>
-        <g font-family="IBM Plex Mono, monospace" font-size="13" font-weight="500" text-anchor="middle">
-          <text x="160" y="53" fill="#E8EDE9">LTN</text>
-          <rect x="0" y="168" width="96" height="48" rx="10" fill="#7FD1AE"/><text x="48" y="197" fill="#0F1412">sLTN</text>
-          <rect x="112" y="168" width="96" height="48" rx="10" fill="#7FD1AE"/><text x="160" y="197" fill="#0F1412">FOT-LTN</text>
-          <rect x="224" y="168" width="96" height="48" rx="10" fill="#7FD1AE"/><text x="272" y="197" fill="#0F1412">iLTN</text>
-        </g>
+      <div class="label">Figure 1 &middot; lineage</div>
+      <svg class="graph" viewBox="-84 0 400 220" role="img" aria-label="sLTN, FOT-LTN and Iterative LTN each extend Logic Tensor Networks">
+        <line class="edge" x1="64" y1="110" x2="176" y2="54"/>
+        <line class="edge" x1="64" y1="110" x2="176" y2="110"/>
+        <line class="edge" x1="64" y1="110" x2="176" y2="166"/>
+        <circle class="node hub" cx="64" cy="110" r="6"/>
+        <text class="node-label hub" x="64" y="136" text-anchor="middle">Logic Tensor Networks</text>
+        <circle class="node" cx="176" cy="54" r="4"/><text class="node-label" x="192" y="58">sLTN</text>
+        <circle class="node" cx="176" cy="110" r="4"/><text class="node-label" x="192" y="114">FOT-LTN</text>
+        <circle class="node" cx="176" cy="166" r="4"/><text class="node-label" x="192" y="170">Iterative LTN</text>
       </svg>
-      <figcaption>
-        <span><strong>sLTN</strong> extends Logic Tensor Networks <a class="cite" href="https://arxiv.org/abs/2608.11136">[2608.11136]</a></span>
-        <span><strong>FOT-LTN</strong> extends Logic Tensor Networks <a class="cite" href="https://arxiv.org/abs/2606.29972">[2606.29972]</a></span>
-        <span><strong>Iterative LTN (iLTN)</strong> extends Logic Tensor Networks <a class="cite" href="https://arxiv.org/abs/2604.26521">[2604.26521]</a></span>
-        <span class="aside">LTN-GAN uses LTNs rather than extending them, so it isn't listed <a class="cite" href="https://arxiv.org/abs/2601.03839">[2601.03839]</a></span>
-      </figcaption>
+      <figcaption><b>Fig. 1</b> &mdash; 3 EXTENDS edges around <i>Logic Tensor Networks</i>, as the query page draws them.</figcaption>
+      <div class="facts">
+        <div class="fact"><div class="s">sLTN</div><div class="p">EXTENDS</div><div class="o">Logic Tensor Networks</div><a href="https://arxiv.org/abs/2608.11136">2608.11136</a></div>
+        <div class="fact"><div class="s">FOT-LTN</div><div class="p">EXTENDS</div><div class="o">Logic Tensor Networks</div><a href="https://arxiv.org/abs/2606.29972">2606.29972</a></div>
+        <div class="fact"><div class="s">Iterative LTN</div><div class="p">EXTENDS</div><div class="o">Logic Tensor Networks</div><a href="https://arxiv.org/abs/2604.26521">2604.26521</a></div>
+      </div>
+      <p class="excluded">LTN-GAN uses LTNs rather than extending them, so it isn't listed (<a href="https://arxiv.org/abs/2601.03839">2601.03839</a>).</p>
     </figure>
   </section>
-</div>
 
-<section class="numbers" aria-label="By the numbers">
-  <dl class="wrap">
-    <div><dt>papers in the corpus</dt><dd>300</dd></div>
-    <div><dt>graph nodes</dt><dd>2,042</dd></div>
-    <div><dt>cited edges</dt><dd>3,291</dd></div>
-    <div><dt>paper recall on the golden set</dt><dd class="hi">100%</dd></div>
-  </dl>
-</section>
+  <section class="numbers" aria-label="By the numbers">
+    <dl class="wrap">
+      <div><dt class="label">papers in the corpus</dt><dd>300</dd></div>
+      <div><dt class="label">graph nodes</dt><dd>2,042</dd></div>
+      <div><dt class="label">cited edges</dt><dd>3,291</dd></div>
+      <div><dt class="label">paper recall, golden set</dt><dd class="hi">100%</dd></div>
+    </dl>
+  </section>
 
-<section id="how" class="wrap how">
-  <div class="how-head">
-    <p class="eyebrow">How it works</p>
-    <h2>A graph that refuses to ship when it shouldn't.</h2>
-  </div>
-  <ol class="steps">
-    <li class="card"><span class="tag">01 · extract</span><h3>Ontology-constrained</h3><p>Six entity types and six relations, open-coded from the corpus. Edges that break domain or range are repaired when the ontology forces one answer, reported when it doesn't.</p></li>
-    <li class="card"><span class="tag warn">02 · gate</span><h3>Drift blocks promotion</h3><p>If the extractor changes its answers on papers that can't have changed, the build exits non-zero. A corpus moving into new topics is reported, not blocked.</p></li>
-    <li class="card"><span class="tag">03 · prove</span><h3>Checked by Z3</h3><p>The assembled graph goes to an SMT solver, which finds contradictions no single paper contains and returns the minimal set of facts behind each.</p></li>
-    <li class="card"><span class="tag">04 · answer</span><h3>Traverse, then cite</h3><p>A question becomes an intent, its phrases link to nodes, and the answer is a traversal, with an arXiv ID behind every claim.</p></li>
-  </ol>
-</section>
+  <section id="how" class="wrap how">
+    <div class="head">
+      <p class="label accent">How it works</p>
+      <h2>A graph that refuses to ship when it shouldn't.</h2>
+    </div>
+    <ol class="steps">
+      <li><span class="label">01 &middot; extract</span><h3>Ontology-constrained</h3><p>Six entity types and six relations, open-coded from the corpus. Edges that break domain or range are repaired when the ontology forces one answer, reported when it doesn't.</p></li>
+      <li><span class="label">02 &middot; gate</span><h3>Drift blocks promotion</h3><p>If the extractor changes its answers on papers that can't have changed, the build exits non-zero. A corpus moving into new topics is reported, not blocked.</p></li>
+      <li><span class="label">03 &middot; prove</span><h3>Checked by Z3</h3><p>The assembled graph goes to an SMT solver, which finds contradictions no single paper contains and returns the minimal set of facts behind each.</p></li>
+      <li><span class="label">04 &middot; answer</span><h3>Traverse, then cite</h3><p>A question becomes an intent, its phrases link to nodes, and the answer is a traversal, with an arXiv ID behind every claim.</p></li>
+    </ol>
+  </section>
 
-<section id="results" class="results">
-  <div class="wrap grid">
+  <section id="results" class="wrap results">
     <div class="results-copy">
-      <p class="eyebrow">Graph vs. vector</p>
-      <h2>"Unrelated" is an answer.</h2>
+      <p class="label accent">Graph vs. vector</p>
+      <h2>&ldquo;Unrelated&rdquo; is an answer.</h2>
       <p>Vector search always returns its top k, even when nothing is relevant. arxiv-lens tells three outcomes apart, and the empty ones count as findings.</p>
       <div class="bars" role="img" aria-label="Paper recall on 18 golden questions: graph 100 percent, vector baseline 61 percent">
-        <div><div class="bar-head"><span>arxiv-lens graph</span><span>100%</span></div><div class="track"><div class="fill" style="width: 100%"></div></div></div>
-        <div><div class="bar-head"><span>vector-RAG baseline</span><span>61%</span></div><div class="track"><div class="fill base" style="width: 61%"></div></div></div>
+        <div><div class="bar-head"><span>arxiv-lens graph</span><span>100%</span></div><div class="bar" style="width: 100%"></div></div>
+        <div><div class="bar-head"><span>vector-RAG baseline</span><span>61%</span></div><div class="bar base" style="width: 61%"></div></div>
         <p class="note">Paper recall on 18 golden questions (12 positive, 6 negative), with ground truth taken from the abstracts, not from the graph.</p>
       </div>
     </div>
     <ul class="outcomes">
-      <li class="card"><code>STATUS_OK</code><span>Nodes resolved, facts found. Every fact comes back with the paper that asserts it.</span></li>
-      <li class="card"><code class="warn">STATUS_ENTITY_NOT_FOUND</code><span>The phrase matched nothing in the graph. You get a no, not a guess at the nearest neighbour.</span></li>
-      <li class="card"><code class="plain">STATUS_NO_FACTS</code><span>Both ideas exist, but no paper in the corpus connects them. That's the finding.</span></li>
+      <li><code>STATUS_OK</code><span>Nodes resolved, facts found. Every fact comes back with the paper that asserts it.</span></li>
+      <li><code>STATUS_ENTITY_NOT_FOUND</code><span>The phrase matched nothing in the graph. You get a no, not a guess at the nearest neighbour.</span></li>
+      <li><code class="plain">STATUS_NO_FACTS</code><span>Both ideas exist, but no paper in the corpus connects them. That's the finding.</span></li>
     </ul>
-  </div>
-</section>
+  </section>
 
-<section class="wrap close">
-  <h2>Two services, one contract: Python for the ML, Java for serving, joined by Kafka and gRPC.</h2>
-  <p class="stack">Neo4j · Z3 · Claude · Spring Boot · Kafka · gRPC · MLflow · Prometheus · Kubernetes</p>
-  <div class="actions">
-    <a class="btn" href="#ask">Ask the graph</a>
-    <a href="https://github.com/NguyenTienDat377/arxiv-lens">Read the source on GitHub</a>
-  </div>
-</section>
+  <section class="wrap close">
+    <h2>Two services, one contract: Python for the ML, Java for serving, joined by Kafka and gRPC.</h2>
+    <p class="stack">Neo4j &middot; Z3 &middot; Claude &middot; Spring Boot &middot; Kafka &middot; gRPC &middot; MLflow &middot; Prometheus &middot; Kubernetes</p>
+    <div class="actions">
+      <a class="btn" href="#ask">Ask the graph</a>
+      <a href="https://github.com/NguyenTienDat377/arxiv-lens">Read the source on GitHub</a>
+    </div>
+  </section>
+</main>
 
 <footer>
-  <div class="wrap"><span>Built by Nguyễn Tiến Đạt · MIT licensed</span><span>lens.nguyentiendat.dev</span></div>
+  <div class="wrap"><span>Built by Nguyễn Tiến Đạt &middot; MIT licensed</span><span>lens.nguyentiendat.dev</span></div>
 </footer>
 
 </body>
