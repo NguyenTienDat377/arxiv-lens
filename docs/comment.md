@@ -1212,7 +1212,13 @@ Rejected: **Redis pub/sub** for the invalidation — a second messaging system b
 
 ---
 
-## `static/index.html` — the UI
+## `static/index.html` and `static/app.html` — the landing page and the UI
+
+**Two pages, joined by a plain GET form.** `index.html` is the landing page at `/`; the query UI moved to `app.html`. The landing page's question box is `<form action="/app.html" method="get">` with `name="q"`, and `app.html` reads `?q=` on load and asks. That means the landing page has no JavaScript and never calls `/api/query` itself, so there is exactly one place that talks to the paid endpoint and handles its errors. The alternative, having the landing page fetch and render answers, would have copied the escaping, the subgraph drawing and the status handling into a second file that could drift. A side effect worth having: a question is now a shareable URL. "Ask another" clears `?q=` with `history.replaceState`, so a reload after it doesn't silently re-spend a call.
+
+**A 429 gets its own message, not the generic failure.** Before the rate limit, any non-2xx meant the service was down. Now a 429 means "you, specifically, asked too fast," and telling a visitor to check whether the service is running would be wrong.
+
+**The landing page's graph is one inline `<svg>`; on the design canvas it was separate placed elements.** The canvas editor drags an `<svg>` as one block, so there the diagram had to be loose boxes and arrows. A shipped page has no editor, and one `viewBox`-scaled SVG shrinks to a phone where pixel-placed elements can't.
 
 Same-origin by construction: served by `query-service` itself off `/`, calling `/api/stats` and `/api/query` as relative paths. That one decision removes an entire category of problems for free — no CORS configuration, no separate build step, no absolute API URL to keep in sync between environments, and it means the page works unmodified behind a tunnel (`cloudflared`, `ngrok`) with zero extra config, because the tunnel forwards to one origin and the browser never needs to know two hosts exist.
 
@@ -1312,12 +1318,32 @@ Everything above was config that was wrong on the page. These were config that w
 
 ---
 
+## Rate limiting `/api/query` — in nginx, not Resilience4j
+
+**The question is which layer can see the thing you're limiting by.** The key here is "an anonymous visitor," which means the client IP, and nginx sees the real TCP peer as `$binary_remote_addr` before the app does any work. Resilience4j was the first idea, but its `RateLimiter` is one shared budget that protects a downstream from overload; it has no notion of "per visitor." Getting that from it means a map of limiters keyed by IP (unbounded unless you also evict) and reading the IP from `X-Forwarded-For`, which the client can set. nginx's `limit_req_zone` keeps its counters in a fixed 10 MB shared-memory zone and evicts the least recently used IPs on its own. The app is the right place only once the key is something only the app knows: an API key, a user tier, the token cost of a call.
+
+**Two zones, because per-IP alone doesn't cap spend.** `ask_ip` stops one person from hammering the endpoint; it does nothing against many people at once. `ask_all` keys on `$server_name`, which is the same for every request, so it is one bucket for the whole site and is the real ceiling on the Anthropic bill. Both directives sit in the same location, and a request has to pass both.
+
+**`rate` and `burst` describe a token bucket.** `rate=6r/m` refills one token every 10 s; `burst=5` lets 5 more requests through at once. `nodelay` serves those immediately instead of queueing them, because a queued request looks like a hung page while a 429 lets the UI say something useful. `limit_req_status 429` replaces nginx's default 503, which would claim the server is broken.
+
+**Where each directive lives matters** *(me, then Claude)*. My first version had three mistakes, and `nginx -t` in a throwaway container caught the one that would have taken the site down:
+
+- `limit_req_zone` was never declared. It is only valid at `http` level, and `conf.d/*.conf` is included inside `http {}`, so the top of `default.conf` counts.
+- `location /` appeared twice: `duplicate location "/"`, the same error commit `0a26e57` fixed once already. nginx refuses to start, and compose's `restart: unless-stopped` turns that into a crash loop.
+- `proxy_set_header` stayed inside the first `location /`. nginx inherits these from the enclosing block only if the current block sets none of its own, so the new `/api/query` location would have reached Spring without `X-Forwarded-For`. Moving them to `server` level gives every location the same headers.
+
+**Testing it cost nothing.** A local nginx with a self-signed certificate at the Let's Encrypt path, in front of a stub upstream that answers 400 and echoes `X-Forwarded-For`, then ten rapid POSTs: six 400s (1 + `burst=5`) then 429s, `/api/stats` still unlimited, and the header arriving on the limited route. Against the real host, an empty JSON body works the same way: Spring's `@Valid` rejects it with a 400 before any Anthropic call, but nginx counts it first.
+
+**Still open:** the rates are placeholders, not measured; the global one should come from budget ÷ cost per uncached query. And the per-IP zone only works while nginx faces the internet directly. Behind a tunnel every visitor arrives from the agent's address, and only the global zone still means anything.
+
+---
+
 ## Next
 
 Everything on the request path is built and exercised end to end: ingest → extract → repair → canonicalize → drift gate → Neo4j → Z3, and REST → gRPC → traversal → cited answer, with `graph.updated` closing the loop back to cache eviction.
 
 The last operational gap is closed too: the pipeline runs on a gated schedule behind secrets, with a cost guard that fails loudly when its cache is gone and a drift gate that stops the build before the graph is touched.
 
-There's a real UI now — served by `query-service` itself, same-origin, no separate frontend to deploy — and a cost boundary worth restating precisely: `/api/stats` and the landing page are free (graph traversal only), `/api/query` is not (it calls Claude). That distinction mattered less while the API was local-only; it stopped being academic the moment the service sat behind a public tunnel URL, because every hit past that point is a real, unmetered Anthropic call from anyone who has the link. `/api/query` has no rate limiting yet — the honest next step, and a real one: a tunnel agent proxies over loopback, so a naive per-IP limiter reading `request.getRemoteAddr()` would see the same address for every visitor and either do nothing or throttle everyone as one. Reading `X-Forwarded-For` is the fix; a Caffeine-backed counter is enough of a mechanism, no new dependency.
+There's a real UI now — served by `query-service` itself, same-origin, no separate frontend to deploy — and a cost boundary worth restating precisely: `/api/stats` and the landing page are free (graph traversal only), `/api/query` is not (it calls Claude). That distinction mattered less while the API was local-only; it stopped being academic the moment the service sat behind a public tunnel URL, because every hit past that point is a real, unmetered Anthropic call from anyone who has the link. `/api/query` is now rate-limited at the nginx edge (see Rate limiting above), per IP and site-wide. What's left is measuring the rates rather than guessing them.
 
 The standing gap is unchanged and worth restating: every gate here measures *stability*, and only the golden eval measures *correctness*. A consistently wrong graph still passes the drift gate, the Z3 checker and the embedding monitor. The eval is 18 questions; that is the number to grow.

@@ -682,3 +682,6 @@ infra/terraform-iam/.terraform/
 *.tfstate.backup
 *.tfstate.lock.info
 *.tfvars
+.agents/
+graphify-out
+skills-lock.json
