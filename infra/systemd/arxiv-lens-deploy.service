@@ -1,0 +1,9 @@
+[Unit]
+Description=Deploy the newest green commit of arxiv-lens
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/opt/arxiv-lens/scripts/deploy.sh

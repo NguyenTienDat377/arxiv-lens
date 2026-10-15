@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for a new arxiv-lens build every 2 minutes
+
+[Timer]
+# At boot too, so an instance that was stopped through several merges comes up
+# on the newest one rather than on whatever it last ran.
+OnBootSec=1min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
